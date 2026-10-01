@@ -8,6 +8,8 @@ pub(crate) struct Feed {
     pub revision: u64,
     pub policy_epoch: u64,
     pub key_ring: Vec<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub key_transitions: Vec<KeyTransition>,
     pub manifest: Vec<u8>,
     pub settings: Vec<u8>,
     pub schema: Vec<u8>,
@@ -66,4 +68,12 @@ pub(crate) struct History {
 pub struct SchemaVersion {
     pub schema: cshm::Schema,
     pub changes: Option<cshm::ChangeSet>,
+}
+
+/// Public routing metadata is checked against the original signed transition.
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct KeyTransition {
+    pub revision: u64,
+    pub proof: Vec<u8>,
 }

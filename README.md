@@ -5,21 +5,22 @@
 Verify one coherent set of community trust material from the cvld door. Charter
 retains the original signed manifest and all five snapshots, current schema,
 checked schema history, revocations and monotonic revisions. It runs on native
-Rust and wasm with caller-supplied time and authenticated origin evidence.
+Rust and wasm with injected Unix-second time and deployment-configured publishing keys.
 
 ```rust
-# fn example(bytes: &[u8], authority: &cchr::AuthenticatedOrigin, now: u64) -> cchr::Result<()> {
-let mut charter = cchr::Charter::new("https://alpha.example.test", "alpha")?;
-charter.install(bytes, authority, now)?;
+# fn example(bytes: &[u8], configuration: cchr::Configuration, now: u64) -> cchr::Result<()> {
+let mut charter = cchr::Charter::new(configuration)?;
+charter.install(bytes, now)?;
 let current = charter.current(now)?;
 assert_eq!(current.community(), "alpha");
 # Ok(()) }
 ```
 
-`AuthenticatedOrigin` is a privileged transport/configuration boundary, analogous
-to cpsd's authenticated community. Never construct it from an unauthenticated
-feed. Bootstrap requires a fresh authenticated origin and revision floor;
-a self-signed ring is insufficient. Rotated rings require new origin evidence.
+`Configuration` comes from the embedding deployment: exact HTTPS origin,
+community, initial public key ring and independent feed/ring revision floors.
+Responses never authorize their own keys. Every later ring requires original
+csgn transition bytes signed by the currently installed ring. Charter owns
+verification and commits the new ring/floors only with a fully valid feed.
 No storage, network, wall-clock access, signing keys or background tasks exist.
 
 Charter supplies `admission_policy(action, now, maximum_snapshot_age)` to Guard's

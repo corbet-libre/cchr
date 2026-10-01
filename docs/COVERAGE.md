@@ -18,3 +18,9 @@ URL without a host fails parsing before Charter receives a `Url`. The redundant
 post-parse host absence condition was removed, while malformed HTTPS origins
 remain covered by the real parser and origin tests. No production coverage
 exclusion is used for this invariant.
+
+The source gate now requires complete LCOV, raw JSON and annotated text from the
+same instrumented execution. Every source file, emitted line, branch and hit/miss
+must agree. A single-file annotated report may omit its filename heading only
+when the other two inventories identify exactly one source file. The exclusion
+manifest is empty; source coverage does not claim every generic instantiation.

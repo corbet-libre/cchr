@@ -20,6 +20,7 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 url = "2"
 
 [dev-dependencies]
+coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 

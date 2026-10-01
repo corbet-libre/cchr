@@ -172,6 +172,7 @@ name = "cchr"
 version = "0.1.0"
 dependencies = [
  "cgrd",
+ "coset",
  "csgn",
  "cshm",
  "ed25519-dalek",
@@ -279,7 +280,7 @@ dependencies = [
 [[package]]
 name = "crbk"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/crbk?branch=main#ee4f73334818e2053c7df3d123a8e3b8cc23b2cf"
+source = "git+https://github.com/corbet-foss/crbk?branch=main#36025fadb8a364857ef893939cd739d48da891b0"
 dependencies = [
  "serde",
  "serde_json",
@@ -304,7 +305,7 @@ dependencies = [
 [[package]]
 name = "csgn"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/csgn?branch=main#eac891b771152b17aa3a903edfe9c129e43a371e"
+source = "git+https://github.com/corbet-foss/csgn?branch=main#5f914e7947a48c8dd0e8d52771e184981bbe6b1d"
 dependencies = [
  "ciborium-ll",
  "coset",
@@ -317,7 +318,7 @@ dependencies = [
 [[package]]
 name = "cshm"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/cshm?branch=main#9fe8a3271ddecf0846d888d038645a55687c2111"
+source = "git+https://github.com/corbet-foss/cshm?branch=main#2fddfc89a3e3503df1430cd22eaf090ca52bc694"
 dependencies = [
  "bigdecimal",
  "jsonschema",

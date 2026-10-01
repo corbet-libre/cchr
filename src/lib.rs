@@ -33,44 +33,16 @@ impl std::error::Error for Error {}
 pub const MAX_FEED_BYTES: usize = 32 * 1024 * 1024;
 const MAX_COSE_BYTES: usize = (1 << 20) + 8192;
 
-/// A trusted adapter's assertion about a freshly authenticated HTTPS response.
-///
-/// Construct only after authenticating the configured origin (TLS, no redirects,
-/// no body cache), or from separately authenticated operator configuration.
-/// Parsing an untrusted feed is NOT sufficient to construct this capability.
-/// `minimum_revision` must come from this fresh authority or a trusted floor.
-/// This is an explicit trust boundary, not a TLS implementation.
-pub struct AuthenticatedOrigin {
-    origin: String,
-    community: String,
-    ring: csgn::KeyRing,
-    minimum_revision: u64,
-    observed_at: u64,
-    valid_until: u64,
-}
-impl AuthenticatedOrigin {
-    pub fn from_authenticated_response(
-        origin: &str,
-        community: &str,
-        ring: &[u8],
-        minimum_revision: u64,
-        observed_at: u64,
-        valid_until: u64,
-    ) -> Result<Self> {
-        let origin = origin_name(origin)?;
-        let ring = csgn::KeyRing::from_cbor(ring).map_err(|_| Error::Unauthenticated)?;
-        if ring.issuer() != community || minimum_revision == 0 || observed_at >= valid_until {
-            return Err(Error::Unauthenticated);
-        }
-        Ok(Self {
-            origin,
-            community: community.into(),
-            ring,
-            minimum_revision,
-            observed_at,
-            valid_until,
-        })
-    }
+/// Public publishing authority from trusted per-community deployment configuration.
+/// Never populate this value from a feed response or member request.
+#[derive(Clone)]
+pub struct Configuration {
+    pub origin: String,
+    pub community: String,
+    pub key_ring: Vec<u8>,
+    pub minimum_revision: u64,
+    /// Sequence of public key-ring changes, never the signer's storage revision.
+    pub ring_revision: u64,
 }
 fn origin_name(value: &str) -> Result<String> {
     let url = url::Url::parse(value).map_err(|_| Error::Scope)?;
@@ -234,17 +206,34 @@ pub struct Charter {
     community: String,
     current: Option<VerifiedCharter>,
     high_water: u64,
+    ring: csgn::KeyRing,
+    ring_revision: u64,
+    minimum_revision: u64,
 }
 impl Charter {
-    pub fn new(origin: &str, community: &str) -> Result<Self> {
+    pub fn new(configuration: Configuration) -> Result<Self> {
+        let Configuration {
+            origin,
+            community,
+            key_ring,
+            minimum_revision,
+            ring_revision,
+        } = configuration;
         if community.is_empty() || community.len() > 256 || community.contains('\0') {
             return Err(Error::Scope);
         }
+        let ring = csgn::KeyRing::from_cbor(&key_ring).map_err(|_| Error::Unauthenticated)?;
+        if ring.issuer() != community || minimum_revision == 0 {
+            return Err(Error::Unauthenticated);
+        }
         Ok(Self {
-            origin: origin_name(origin)?,
-            community: community.into(),
+            origin: origin_name(&origin)?,
+            community,
             current: None,
             high_water: 0,
+            ring,
+            ring_revision,
+            minimum_revision,
         })
     }
     /// Return the canonical origin bound at construction, without asserting trust.
@@ -292,29 +281,40 @@ impl Charter {
     }
     /// Verify a complete candidate without mutating installed material or floors.
     /// The synchronous Verifying phase commits all five kinds together, or none.
-    pub fn install(
-        &mut self,
-        bytes: &[u8],
-        authority: &AuthenticatedOrigin,
-        now: u64,
-    ) -> Result<&VerifiedCharter> {
+    pub fn install(&mut self, bytes: &[u8], now: u64) -> Result<&VerifiedCharter> {
         self.observe(now)?;
         if bytes.len() > MAX_FEED_BYTES {
             return Err(Error::Limit);
         }
-        if authority.origin != self.origin
-            || authority.community != self.community
-            || now < authority.observed_at
-            || now >= authority.valid_until
-        {
-            return Err(Error::Unauthenticated);
-        }
         let feed: wire::Feed = json::decode(bytes)?;
-        if feed.key_ring != authority.ring.to_cbor() {
+        if feed.key_transitions.len() > 256 {
+            return Err(Error::Limit);
+        }
+        let mut ring = self.ring.clone();
+        let mut ring_revision = self.ring_revision;
+        for transition in &feed.key_transitions {
+            // Older retained proofs are not authority and need not remain unexpired.
+            if transition.revision <= self.ring_revision {
+                continue;
+            }
+            if transition.revision <= ring_revision {
+                return Err(Error::Rollback);
+            }
+            let verified = csgn::verify_transition(&ring, &transition.proof, now)
+                .map_err(|_| Error::Signature)?;
+            if verified.previous() != &ring
+                || verified.revision() != transition.revision
+                || verified.next() == verified.previous()
+            {
+                return Err(Error::Incoherent);
+            }
+            ring = verified.next().clone();
+            ring_revision = verified.revision();
+        }
+        if feed.key_ring != ring.to_cbor() {
             return Err(Error::Unauthenticated);
         }
-        let signed = authority
-            .ring
+        let signed = ring
             .verify(&feed.manifest, csgn::Kind::SettingsSnapshot, now)
             .map_err(|_| Error::Signature)?;
         let manifest: wire::Manifest = json::decode(signed.payload())?;
@@ -331,7 +331,7 @@ impl Charter {
         {
             return Err(Error::Incoherent);
         }
-        if feed.revision < authority.minimum_revision {
+        if feed.revision < self.minimum_revision {
             return Err(Error::Rollback);
         }
         if let Some(old) = &self.current {
@@ -357,8 +357,7 @@ impl Charter {
             if cose.len() > MAX_COSE_BYTES {
                 return Err(Error::Limit);
             }
-            let signed = authority
-                .ring
+            let signed = ring
                 .verify(&cose, kind.cose(), now)
                 .map_err(|_| Error::Signature)?;
             let doc: wire::Snapshot<Value> = json::decode(signed.payload())?;
@@ -434,13 +433,15 @@ impl Charter {
             revision: feed.revision,
             epoch: feed.policy_epoch,
             deadline,
-            ring: authority.ring.clone(),
+            ring: ring.clone(),
             manifest: feed.manifest,
             publications,
             schema,
             history: history.versions,
             revocations,
         });
+        self.ring = ring;
+        self.ring_revision = ring_revision;
         self.current(now)
     }
 }

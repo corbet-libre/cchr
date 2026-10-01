@@ -60,6 +60,7 @@ jobs:
           name: rustfmt-patch
           path: rustfmt.patch
       - run: test ! -s rustfmt.patch
+      - run: python3 .github/test-check-source-coverage.py
   check:
     needs: resolve
     runs-on: ubuntu-24.04
@@ -118,12 +119,19 @@ jobs:
           path: .
       - name: Measure production lines and branches
         run: cargo llvm-cov --locked --branch --ignore-filename-regex '(^|/)(tests|scripts)/' --json --output-path coverage.json
+      - name: Retain source and annotated diagnostics from the same execution
+        run: |
+          cargo llvm-cov report --branch --ignore-filename-regex '(^|/)(tests|scripts)/' --lcov --output-path coverage.lcov
+          cargo llvm-cov report --branch --ignore-filename-regex '(^|/)(tests|scripts)/' --text --show-instantiations > coverage.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: coverage
-          path: coverage.json
-      - run: python3 .github/check-coverage.py coverage.json
+          path: |
+            coverage.json
+            coverage.lcov
+            coverage.txt
+      - run: python3 .github/check-source-coverage.py coverage.lcov coverage.json coverage.txt
   door:
     needs: [resolve, check]
     runs-on: ubuntu-24.04

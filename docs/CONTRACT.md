@@ -6,21 +6,25 @@ member activity. csgn verifies signatures; cshm checks schema semantics.
 
 ## API and trust boundary
 
-`Charter::new(origin, community)` binds one exact normalized HTTPS origin and
-community. Userinfo, query, fragment, non-root paths and HTTP are refused.
-`origin()` returns this canonical configuration for adapters to reuse; it does
-not authenticate the origin or establish trust.
-`AuthenticatedOrigin::from_authenticated_response` is a privileged port: only a
-trusted adapter which authenticated that origin, or authenticated configuration,
-may assert its ring, current revision floor, observation time and exclusive
-receipt deadline. Untrusted bytes cannot establish their own authority. An
-origin assertion is valid only from its observation time through its deadline.
-A fresh TLS request must bypass caches and redirects. Network timing anonymity
-and authenticating a compromised server are not claims of this type.
+`Charter::new(Configuration)` binds trusted per-community deployment configuration:
+exact normalized HTTPS origin, community, public root ring, positive minimum feed
+revision and nondecreasing ring-only transition revision. Userinfo, query,
+fragment, non-root paths and HTTP are refused. The root issuer must match the
+community. The configuration must never come from a response or member request.
+`origin()` exposes the canonical configured origin for transport adapters.
 
-`install(bytes, authority, now)` checks the original cvld JSON envelope and all
-six COSE objects: manifest plus settings, schema, schema_versions, communities,
-revocations. It returns an immutable `VerifiedCharter` only after all checks.
+`install(bytes, now)` accepts original public bytes and injected Unix seconds.
+It verifies original csgn KeyRingTransition proofs using the currently installed
+ring before any candidate ring can verify a manifest. Each new proof binds the
+exact predecessor/successor rings and its ring-only revision; mismatched claimed
+revision, nonincreasing new revisions, self-transition or missing continuity
+refuse. Older retained proofs at or below the installed floor are ignored and
+confer no authority. After all proofs, the resulting ring must exactly equal the
+feed's ring. A valid TLS connection cannot authorize a forged root.
+
+The complete candidate includes the original manifest and five snapshots:
+settings, schema, schema_versions, communities and separate revocations. Ring
+changes, floors and all publications commit together only after every check.
 `current(now)` checks expiry and the clock high-water mark on every read.
 `changes_since(revision, now)` returns Unchanged or Replace for the whole current
 set, never a persisted event history; future cursors fail.
@@ -44,7 +48,7 @@ is refused until it catches up, including after reading an expired view.
 Installation prepares and validates all content before replacing one owned
 in-memory value. There is no partial commit, storage conflict or uncertain I/O
 outcome in this pure leaf. A new instance has no authority; forum restart requires
-a fresh authenticated origin/floor source. Device persistence belongs only in an
+trusted deployment roots/floors and a fresh signed publication. Device persistence belongs only in an
 encrypted vault adapter and is not implemented here.
 
 ## Formats, floors and limits
@@ -64,9 +68,13 @@ JSON map; no gate semantics are discarded. Separate revocations always install.
 Manifest and per-kind revisions and epoch never regress in a running instance.
 Equal revision with different signed bytes is equivocation, including refreshed
 signature timestamps. An equal manifest revision cannot replace any snapshot.
-A new ring requires new authenticated origin evidence; retained keys continue to
-verify according to csgn. No signature by the candidate ring authenticates that
-ring. The producer's manifest does not include snapshot hashes: coherent delivery
+Every later ring requires signed continuity from the installed ring; retained
+keys continue to verify according to csgn. No signature by a candidate ring
+authenticates that ring. Optional `key_transitions` carries ordered objects with
+public `revision` and original COSE `proof` bytes. At most256 retained transitions
+fit within the existing total transport bound. Ring revisions advance only for
+ring changes, never for ordinary signing/reopen activity. A missing or expired
+required proof fails closed; reconfiguration is an explicit deployment action. The producer's manifest does not include snapshot hashes: coherent delivery
 also relies on authenticated origin transport, alongside scope/epoch/schema and
 monotonic checks. This consumer does not invent a new manifest version.
 
@@ -82,7 +90,7 @@ never origin/community/member values or dependency diagnostics.
 
 Shared native/wasm vectors cover signed corruption, wrong purpose/scope, mixed
 epochs, missing kinds, rollback, exact-byte conflict, duplicate fields, expiry,
-clock regression, bootstrap freshness, authorized rotation/retained keys and a
+clock regression, configured roots, signed rotation/retained keys and a
 bounded 200-consumer install/update load. The real-door job fetches cvld main,
 resolves one coherent branch-main dependency graph, and retains the exact source
 revision, metadata and Cargo.lock as evidence. It uses temporary libSQL services and real
@@ -99,7 +107,7 @@ never admits anyone: Guard requires signed credential/device/profile/pin evidenc
 and invokes the complete portable Rulebook evaluator. Policies requiring global
 or proof-time evidence absent from cplc credentials refuse; no authority is
 invented. Device-authority issuance at the door remains the G3 integration seam.
-Operational TLS bootstrap and encrypted device floor persistence remain caller
+Operational TLS and encrypted device floor persistence remain caller
 responsibilities. No full cmeet/Tor acceptance is implied.
 
 Archived schema definitions and their classifications are immutable across
