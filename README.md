@@ -52,3 +52,15 @@ libSQL databases and software authenticators. It changes policy/schema/revocatio
 through ordinary actions, verifies ordinary activity leaves feed bytes unchanged,
 and feeds those bytes to both native and wasm consumers. Artifacts contain the
 exact dependency locks and synthetic public publications. No external accounts.
+
+## Dependency maintenance and coverage
+
+First-party dependencies follow `main`; Cargo.lock records one exact revision
+per crate. CI checks the entire resolved graph, including optional declarations.
+Dependabot covers Cargo and GitHub Actions (there is no npm manifest here).
+The merge workflow uses GitHub metadata only and requires every substantive CI
+job and all published checks to succeed on the exact Dependabot head. It never
+executes PR code with write permissions or bypasses branch protection.
+
+[cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) supplies LLVM line and
+branch measurements; the strict gate and exclusions are in [COVERAGE.md](docs/COVERAGE.md).
