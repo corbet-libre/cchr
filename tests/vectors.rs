@@ -447,6 +447,8 @@ fn one_expired_snapshot_refuses_the_entire_candidate_at_its_deadline() {
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn origin_receipts_and_readiness_reject_invalid_boundaries() {
+    let configured = Charter::new("https://ALPHA.example.test:443/", "alpha").unwrap();
+    assert_eq!(configured.origin(), ORIGIN);
     let mut s = signer();
     let ring = s.key_ring().to_cbor();
     for (community, minimum, observed, until) in [

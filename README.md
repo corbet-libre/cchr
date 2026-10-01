@@ -46,7 +46,7 @@ LGPL-3.0-linking-exception; not published to package registries.
 
 ## Validation
 
-GitHub Actions runs fmt, strict Clippy, pinned-dependency checks, native tests,
+GitHub Actions runs fmt, strict Clippy, coherent dependency checks, native tests,
 wasm32 compilation and the same vectors under wasm-bindgen-test. The separate
 `door` job starts the real cvld HTTP global/community services with disposable
 libSQL databases and software authenticators. It changes policy/schema/revocation

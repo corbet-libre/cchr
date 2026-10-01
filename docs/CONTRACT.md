@@ -8,6 +8,8 @@ member activity. csgn verifies signatures; cshm checks schema semantics.
 
 `Charter::new(origin, community)` binds one exact normalized HTTPS origin and
 community. Userinfo, query, fragment, non-root paths and HTTP are refused.
+`origin()` returns this canonical configuration for adapters to reuse; it does
+not authenticate the origin or establish trust.
 `AuthenticatedOrigin::from_authenticated_response` is a privileged port: only a
 trusted adapter which authenticated that origin, or authenticated configuration,
 may assert its ring, current revision floor, observation time and exclusive

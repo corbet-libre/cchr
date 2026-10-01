@@ -248,6 +248,10 @@ impl Charter {
             high_water: 0,
         })
     }
+    /// Return the canonical origin bound at construction, without asserting trust.
+    pub fn origin(&self) -> &str {
+        &self.origin
+    }
     fn observe(&mut self, now: u64) -> Result<()> {
         if now < self.high_water {
             return Err(Error::ClockRegression);
