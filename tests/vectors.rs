@@ -1031,3 +1031,171 @@ fn configuration_requires_a_valid_scoped_publishing_root_and_floor() {
     config.community = "different".into();
     assert!(matches!(Charter::new(config), Err(Error::Unauthenticated)));
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn two_hop_chain_is_atomic_with_later_snapshot_checks() {
+    let mut s = signer();
+    let original = feed(&mut s, 10, 1);
+    let root_cbor = s.key_ring().to_cbor();
+    let root_manifest: Vec<u8> = serde_json::from_value(original["manifest"].clone()).unwrap();
+    let root_settings: Vec<u8> = serde_json::from_value(original["settings"].clone()).unwrap();
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    charter.install(&bytes(&original), NOW).unwrap();
+    let proof1 = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [72; 32]), NOW, NOW + 500)
+        .unwrap();
+    let first = json!({"revision": s.ring_revision(), "proof": proof1});
+    s.acknowledge_transition(s.ring_revision()).unwrap();
+    let proof2 = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [73; 32]), NOW, NOW + 500)
+        .unwrap();
+    let second = json!({"revision": s.ring_revision(), "proof": proof2});
+    s.acknowledge_transition(s.ring_revision()).unwrap();
+    let mut valid = feed(&mut s, 11, 1);
+    valid["key_transitions"] = json!([first.clone(), second.clone()]);
+    let mut bad = valid.clone();
+    replace(
+        &mut s,
+        &mut bad,
+        "settings",
+        CoseKind::SettingsSnapshot,
+        |p| {
+            p["revision"] = json!(9);
+        },
+    );
+    assert_eq!(
+        charter.install(&bytes(&bad), NOW).unwrap_err(),
+        Error::Rollback
+    );
+    assert_eq!(charter.current(NOW).unwrap().revision(), 10);
+    assert_eq!(
+        charter.current(NOW).unwrap().key_ring().to_cbor(),
+        root_cbor
+    );
+    assert_eq!(
+        charter.current(NOW).unwrap().manifest_bytes(),
+        root_manifest
+    );
+    assert_eq!(
+        charter
+            .current(NOW)
+            .unwrap()
+            .publication(Kind::Settings)
+            .signed_bytes(),
+        root_settings
+    );
+    assert_eq!(charter.changes_since(10, NOW).unwrap(), Changes::Unchanged);
+    charter.install(&bytes(&valid), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().revision(), 11);
+    assert_eq!(charter.current(NOW).unwrap().key_ring(), s.key_ring());
+    let mut next = feed(&mut s, 12, 1);
+    next["key_transitions"] = json!([first, second]);
+    charter.install(&bytes(&next), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().revision(), 12);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn retained_prefix_is_skipped_without_granting_attacker_authority() {
+    let mut s = signer();
+    let original = feed(&mut s, 10, 1);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    charter.install(&bytes(&original), NOW).unwrap();
+    let proof1 = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [72; 32]), NOW, NOW + 500)
+        .unwrap();
+    let first = json!({"revision": s.ring_revision(), "proof": proof1});
+    s.acknowledge_transition(s.ring_revision()).unwrap();
+    let proof2 = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [73; 32]), NOW, NOW + 500)
+        .unwrap();
+    let second = json!({"revision": s.ring_revision(), "proof": proof2});
+    s.acknowledge_transition(s.ring_revision()).unwrap();
+    let mut valid = feed(&mut s, 11, 1);
+    valid["key_transitions"] = json!([first.clone(), second.clone()]);
+    charter.install(&bytes(&valid), NOW).unwrap();
+    let proof3 = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [74; 32]), NOW, NOW + 500)
+        .unwrap();
+    let third = s.ring_revision();
+    s.acknowledge_transition(third).unwrap();
+    let base = feed(&mut s, 12, 1);
+    let mut attacker =
+        Signer::new("alpha", SecretKey::from_seed(&mut [90; 32]), NOW - 1, 1000).unwrap();
+    let evil = attacker
+        .rotate_with_proof(SecretKey::from_seed(&mut [91; 32]), NOW, NOW + 500)
+        .unwrap();
+    let mut forged = base.clone();
+    forged["key_transitions"] =
+        json!([first.clone(), second.clone(), {"revision": third, "proof": evil}]);
+    assert!(charter.install(&bytes(&forged), NOW).is_err());
+    assert_eq!(charter.current(NOW).unwrap().revision(), 11);
+    let mut replayed = base.clone();
+    replayed["key_transitions"] = json!([first.clone(), second.clone(), {"revision": third, "proof": first["proof"].clone()}]);
+    assert!(charter.install(&bytes(&replayed), NOW).is_err());
+    assert_eq!(charter.current(NOW).unwrap().revision(), 11);
+    let mut good = base.clone();
+    good["key_transitions"] = json!([{"revision": 1, "proof": []}, {"revision": 2, "proof": []}, {"revision": third, "proof": proof3}]);
+    charter.install(&bytes(&good), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().revision(), 12);
+    assert_eq!(charter.current(NOW).unwrap().key_ring(), s.key_ring());
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn failed_candidate_preserves_exact_deadline_and_floors() {
+    let mut s = signer();
+    let original = feed(&mut s, 10, 1);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    charter.install(&bytes(&original), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().valid_until(), NOW + 500);
+    let proof = s
+        .rotate_with_proof(SecretKey::from_seed(&mut [72; 32]), NOW, NOW + 500)
+        .unwrap();
+    let transition = json!({"revision": s.ring_revision(), "proof": proof});
+    s.acknowledge_transition(s.ring_revision()).unwrap();
+    let mut shortened = feed(&mut s, 11, 1);
+    shortened["key_transitions"] = json!([transition.clone()]);
+    let cose: Vec<u8> = serde_json::from_value(shortened["revocations"].clone()).unwrap();
+    let payload = s
+        .key_ring()
+        .verify(&cose, CoseKind::RevocationListSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    shortened["revocations"] = json!(
+        s.sign(CoseKind::RevocationListSnapshot, &payload, NOW, NOW + 50)
+            .unwrap()
+    );
+    charter.install(&bytes(&shortened), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().valid_until(), NOW + 50);
+    let mut bad = feed(&mut s, 12, 2);
+    bad["key_transitions"] = json!([transition.clone()]);
+    replace(
+        &mut s,
+        &mut bad,
+        "settings",
+        CoseKind::SettingsSnapshot,
+        |p| {
+            p["revision"] = json!(9);
+        },
+    );
+    assert_eq!(
+        charter.install(&bytes(&bad), NOW).unwrap_err(),
+        Error::Rollback
+    );
+    assert_eq!(charter.current(NOW).unwrap().revision(), 11);
+    assert_eq!(charter.current(NOW).unwrap().valid_until(), NOW + 50);
+    assert_eq!(charter.current(NOW).unwrap().policy_epoch(), 1);
+    assert_eq!(charter.current(NOW + 49).unwrap().revision(), 11);
+    assert_eq!(charter.current(NOW + 50).unwrap_err(), Error::Expired);
+    let mut next = feed(&mut s, 12, 2);
+    next["key_transitions"] = json!([{"revision": 1, "proof": []}]);
+    charter.install(&bytes(&next), NOW + 50).unwrap();
+    assert_eq!(charter.current(NOW + 50).unwrap().revision(), 12);
+    assert_eq!(
+        charter.install(&bytes(&shortened), NOW + 50).unwrap_err(),
+        Error::Rollback
+    );
+}
