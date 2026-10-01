@@ -56,6 +56,8 @@ csgn purpose, same community and epoch, positive per-kind revision no greater
 than the manifest revision. csgn enforces canonical COSE and all signature times.
 Schema history requires `cplc.schema-versions.v1`, ordered valid schemas ending
 in the exact current schema; cshm must reproduce every predecessor classification.
+Its classify_changes requires each successor version to be strictly greater,
+so repeated and decreasing versions fail before any archive is installed.
 Archives never authorize grandfathering. Settings remain the full authenticated
 JSON map; no gate semantics are discarded. Separate revocations always install.
 
@@ -81,8 +83,9 @@ never origin/community/member values or dependency diagnostics.
 Shared native/wasm vectors cover signed corruption, wrong purpose/scope, mixed
 epochs, missing kinds, rollback, exact-byte conflict, duplicate fields, expiry,
 clock regression, bootstrap freshness, authorized rotation/retained keys and a
-bounded 200-consumer install/update load. The real-door job uses the pinned cvld
-source named in `scripts/door-fixtures.sh`, temporary libSQL services and real
+bounded 200-consumer install/update load. The real-door job fetches cvld main,
+resolves one coherent branch-main dependency graph, and retains the exact source
+revision, metadata and Cargo.lock as evidence. It uses temporary libSQL services and real
 WebAuthn/BBS flows. All/any/k-of-n policy edits, schema publication and last-passkey
 revocation use the HTTP registry, and ordinary registration/lobby traffic must
 leave trust bytes unchanged. Identical captured bytes execute natively and in wasm.

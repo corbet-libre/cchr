@@ -37,10 +37,14 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           cache-on-failure: true
+      - name: Verify the committed dependency snapshot before refreshing
+        run: |
+          cargo metadata --locked --format-version 1 > dependency-metadata.json
+          python3 .github/check-first-party.py
       - name: Refresh one reproducible dependency snapshot
         run: cargo update
       - name: Resolve one snapshot for every job
-        run: cargo metadata --format-version 1 > dependency-metadata.json
+        run: cargo metadata --locked --format-version 1 > dependency-metadata.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: resolved-lock
@@ -160,6 +164,8 @@ jobs:
           path: |
             .build/fixtures
             .build/cvld/Cargo.lock
+            .build/cvld/dependency-metadata.json
+            .build/door-revision.txt
   dependency-policy:
     needs: resolve
     runs-on: ubuntu-24.04

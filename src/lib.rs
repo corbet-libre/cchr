@@ -21,7 +21,6 @@ pub enum Error {
     Expired,
     ClockRegression,
     Unavailable,
-    UnsupportedPolicy,
 }
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -466,6 +465,8 @@ fn validate_history(history: &wire::History, schema: &cshm::Schema) -> Result<()
                 return Err(Error::Incoherent);
             }
         } else {
+            // cshm requires the successor version to be strictly greater,
+            // rejecting duplicate and decreasing archive entries before classification.
             let actual = cshm::classify_changes(&history.versions[i - 1].schema, &entry.schema)
                 .map_err(|_| Error::Incoherent)?;
             if entry.changes.as_ref() != Some(&actual) {

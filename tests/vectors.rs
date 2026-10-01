@@ -669,7 +669,7 @@ fn history_classification_and_retention_are_verified() {
     let next = history_feed(&mut s, 11, 2);
     c.install(&bytes(&next), &receipt, NOW).unwrap();
     assert_eq!(c.current(NOW).unwrap().schema_history().len(), 2);
-    for case in 0..12 {
+    for case in 0..13 {
         let mut candidate = history_feed(&mut s, 12, 2);
         replace(
             &mut s,
@@ -693,14 +693,19 @@ fn history_classification_and_retention_are_verified() {
                     }
                     9 => h["versions"][0]["schema"]["private"] = json!([{"id":"x"}]),
                     10 => h["versions"][1]["schema"]["community"] = json!("beta"),
-                    _ => h["versions"][1]["schema"]["public"] = json!([{"id":"x"}]),
+                    11 => h["versions"][1]["schema"]["public"] = json!([{"id":"x"}]),
+                    _ => h["versions"][0]["schema"]["version"] = json!(3),
                 }
             },
         );
-        assert!(
-            c.install(&bytes(&candidate), &receipt, NOW).is_err(),
-            "history case {case}"
-        );
+        let error = c.install(&bytes(&candidate), &receipt, NOW).unwrap_err();
+        if matches!(case, 5 | 12) {
+            assert_eq!(
+                error,
+                Error::Incoherent,
+                "nonincreasing history case {case}"
+            );
+        }
         assert_eq!(c.current(NOW).unwrap().revision(), 11);
     }
     let rollback = feed(&mut s, 12, 2);
@@ -909,5 +914,62 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
         let mut wrong = body.clone();
         wrong["device"] = json!(vec![0; 32]);
         assert!(!cgrd::check_published(&present(&wrong), &policy, schema).is_admitted());
+        for case in 0..5 {
+            let mut restricted = candidate.clone();
+            let expected = if case < 2 {
+                replace(
+                    &mut s,
+                    &mut restricted,
+                    "revocations",
+                    CoseKind::RevocationListSnapshot,
+                    |p| {
+                        if case == 0 {
+                            p["content"]["members"] = json!(["person"]);
+                        } else {
+                            p["content"]["devices"] = json!([device.verifying_key().to_bytes()]);
+                        }
+                    },
+                );
+                cgrd::Refusal::Revoked
+            } else {
+                replace(
+                    &mut s,
+                    &mut restricted,
+                    "settings",
+                    CoseKind::SettingsSnapshot,
+                    |p| {
+                        let content = &mut p["content"];
+                        match case {
+                            2 => {
+                                content["action/admission"]["all_of"] = json!([{"gate":"voucher","level":"global","provider":"community"}]);
+                                content["gate/global/voucher"] = json!(true);
+                                content["provider/global/voucher/community"] = json!(true);
+                            }
+                            3 => content["action/admission"]["maximum_proof_age"] = json!(300),
+                            _ => {
+                                content["action/admission"]["k_of_n"] = json!({"k":2,"of":[{"gate":"voucher","level":"community","provider":"community"}]})
+                            }
+                        }
+                    },
+                );
+                cgrd::Refusal::Gate
+            };
+            let mut restricted_charter = Charter::new(ORIGIN, "alpha").unwrap();
+            let current = restricted_charter
+                .install(&bytes(&restricted), &receipt, NOW)
+                .unwrap();
+            let policy = current.admission_policy("admission", NOW, 500).unwrap();
+            assert_eq!(
+                cgrd::check_published(
+                    &signed,
+                    &policy,
+                    current.publication(Kind::Schema).signed_bytes()
+                ),
+                cgrd::Admission::Refused {
+                    reasons: vec![expected]
+                },
+                "authenticated refusal case {case}",
+            );
+        }
     }
 }
