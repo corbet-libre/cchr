@@ -12,6 +12,7 @@ publish = false
 door-vectors = []
 
 [dependencies]
+cgrd = { git = "https://github.com/corbet-foss/cgrd", branch = "main", default-features = false }
 csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false }
 cshm = { git = "https://github.com/corbet-foss/cshm", branch = "main" }
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +20,7 @@ serde_json = { version = "1", features = ["arbitrary_precision"] }
 url = "2"
 
 [dev-dependencies]
+ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

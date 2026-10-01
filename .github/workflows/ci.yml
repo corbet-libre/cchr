@@ -36,8 +36,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           cache-on-failure: true
-      - name: Refresh dependency snapshot when requested
-        if: github.event_name == 'schedule' || inputs.refresh == true
+      - name: Refresh one reproducible dependency snapshot
         run: cargo update
       - name: Resolve one snapshot for every job
         run: cargo metadata --format-version 1 > dependency-metadata.json

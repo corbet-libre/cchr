@@ -85,13 +85,17 @@ WebAuthn/BBS flows. All/any/k-of-n policy edits, schema publication and last-pas
 revocation use the HTTP registry, and ordinary registration/lobby traffic must
 leave trust bytes unchanged. Identical captured bytes execute natively and in wasm.
 
-Open G1: the existing guard cannot consume the richer policy and separate
-revocations. `admission_policy()` always returns `UnsupportedPolicy`; no positive
-attendance claim is made. A verified-input adapter belongs in the cgrd/cvld owner,
-with real revoked-device/admission vectors and security review. Operational TLS
-bootstrap provisioning and encrypted device floor persistence remain integration
-responsibilities. This repository does not deploy, publish registries or certify
-the full cmeet/Tor path.
+`admission_policy(action, now, maximum_snapshot_age)` borrows the original signed
+settings and separate revocations for `cgrd::check_published`. It refuses expired
+Charters and transfers authenticated revision/epoch floors without serializing
+replacement settings. The schema bytes come from `publication(Kind::Schema)`.
+The trusted caller selects the Rulebook action. Merely constructing this adapter
+never admits anyone: Guard requires signed credential/device/profile/pin evidence
+and invokes the complete portable Rulebook evaluator. Policies requiring global
+or proof-time evidence absent from cplc credentials refuse; no authority is
+invented. Device-authority issuance at the door remains the G3 integration seam.
+Operational TLS bootstrap and encrypted device floor persistence remain caller
+responsibilities. No full cmeet/Tor acceptance is implied.
 
 Archived schema definitions and their classifications are immutable across
 installs. Every previously retained version must remain present, byte-equivalent

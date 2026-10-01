@@ -76,7 +76,6 @@ impl AuthenticatedOrigin {
 fn origin_name(value: &str) -> Result<String> {
     let url = url::Url::parse(value).map_err(|_| Error::Scope)?;
     if url.scheme() != "https"
-        || url.host_str().is_none()
         || url.path() != "/"
         || !url.username().is_empty()
         || url.password().is_some()
@@ -180,10 +179,34 @@ impl VerifiedCharter {
     pub fn revocations(&self) -> &Revocations {
         &self.revocations
     }
-    /// The current cgrd format cannot consume the full cplc policy and revocations.
-    /// No lossy conversion, unsigned replacement or permissive verdict is exposed.
-    pub fn admission_policy(&self) -> Result<std::convert::Infallible> {
-        Err(Error::UnsupportedPolicy)
+    /// Borrow original authenticated publications for Guard. This is not an
+    /// admission: Guard still requires a valid credential, device binding,
+    /// complete rich policy, profile and pin evidence. The action is trusted
+    /// application configuration, never selected by a submitted presentation.
+    pub fn admission_policy<'a>(
+        &'a self,
+        action: &'a str,
+        now: u64,
+        maximum_snapshot_age: u64,
+    ) -> Result<cgrd::PublishedPolicy<'a>> {
+        if now >= self.deadline {
+            return Err(Error::Expired);
+        }
+        Ok(cgrd::PublishedPolicy {
+            policy: cgrd::Policy {
+                community: &self.community,
+                keys: &self.ring,
+                now,
+                minimum_epoch: self.epoch,
+                minimum_settings_revision: self.publication(Kind::Settings).revision(),
+                minimum_schema_revision: self.publication(Kind::Schema).revision(),
+                maximum_snapshot_age,
+                settings: self.publication(Kind::Settings).signed_bytes(),
+            },
+            revocations: self.publication(Kind::Revocations).signed_bytes(),
+            minimum_revocations_revision: self.publication(Kind::Revocations).revision(),
+            action,
+        })
     }
 }
 impl fmt::Debug for VerifiedCharter {

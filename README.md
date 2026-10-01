@@ -20,10 +20,11 @@ feed. Bootstrap requires a fresh authenticated origin and revision floor;
 a self-signed ring is insufficient. Rotated rings require new origin evidence.
 No storage, network, wall-clock access, signing keys or background tasks exist.
 
-Charter is **not an admission checker**. The current cgrd policy format cannot
-consume cplc's full all/any/threshold policy and separate revocations. Until that
-owner boundary is implemented, `admission_policy()` returns `UnsupportedPolicy`.
-Do not convert settings, drop constraints or sign replacement snapshots.
+Charter supplies `admission_policy(action, now, maximum_snapshot_age)` to Guard's
+`check_published`. The adapter retains original signed settings and separate
+revocations. Guard returns admission only after the actual credential, device,
+profile, pins and complete Rulebook policy pass. Charter alone grants no
+admission. No replacement snapshot is signed or synthesized.
 
 See [the implemented contract](docs/CONTRACT.md). LGPL-3.0-only WITH
 LGPL-3.0-linking-exception; not published to package registries.

@@ -36,7 +36,30 @@ fn running_door_publications_install_without_translation() {
             current.publication(Kind::Settings).signed_bytes(),
             serde_json::from_value::<Vec<u8>>(raw["settings"].clone()).unwrap()
         );
-        assert_eq!(current.admission_policy(), Err(Error::UnsupportedPolicy));
+        let policy = current.admission_policy("admission", NOW, 86400).unwrap();
+        assert_eq!(
+            policy.policy.settings,
+            current.publication(Kind::Settings).signed_bytes()
+        );
+        assert_eq!(
+            policy.revocations,
+            current.publication(Kind::Revocations).signed_bytes()
+        );
+        assert!(
+            !cgrd::check_published(
+                &cgrd::Bundle {
+                    payload: vec![],
+                    signature: vec![]
+                },
+                &policy,
+                current.publication(Kind::Schema).signed_bytes(),
+            )
+            .is_admitted()
+        );
+        assert!(matches!(
+            current.admission_policy("admission", current.valid_until(), 86400),
+            Err(Error::Expired)
+        ));
     }
     assert_eq!(charter.current(NOW).unwrap().schema().version, 2);
     assert_eq!(charter.current(NOW).unwrap().schema_history().len(), 2);

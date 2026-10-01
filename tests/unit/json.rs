@@ -7,5 +7,8 @@ fn visitor_numeric_inputs_and_diagnostics_remain_value_free() {
     assert!(Unique::deserialize(value::I64Deserializer::<value::Error>::new(-1)).is_ok());
     assert!(Unique::deserialize(value::F64Deserializer::<value::Error>::new(1.5)).is_ok());
     let error = value::Error::invalid_type(Unexpected::Unit, &Unique);
-    assert_eq!(error.to_string(), "invalid type: unit value, expected JSON without duplicate keys");
+    assert_eq!(
+        error.to_string(),
+        "invalid type: unit value, expected JSON without duplicate keys"
+    );
 }
