@@ -1,5 +1,7 @@
 # cchr — Charter
 
+## Scope
+
 Verify one coherent set of community trust material from the cvld door. Charter
 retains the original signed manifest and all five snapshots, current schema,
 checked schema history, revocations and monotonic revisions. It runs on native
@@ -42,7 +44,7 @@ LGPL-3.0-linking-exception; not published to package registries.
   or cryptographic primitive is implemented.
 - Importing the cplc/cvld server facade would couple this LGPL device consumer to
   FSL issuers and native storage. Their existing wire fields are decoded locally
-  and checked against actual HTTP output in an isolated, pinned producer process.
+  and checked against actual HTTP output in an isolated current-main producer process.
 
 ## Validation
 
