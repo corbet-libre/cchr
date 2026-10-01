@@ -1,0 +1,81 @@
+name: ci
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', 'AGENTS.md', 'LICENSE', 'LICENSE.md', 'LICENSES/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: 2
+  CARGO_TERM_COLOR: never
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          cache-on-failure: true
+      - run: rustc --version
+      - run: test -f Cargo.lock || cargo generate-lockfile
+      - run: cargo metadata --locked --format-version 1 > dependency-metadata.json
+      - run: python3 .github/check-first-party.py
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo test --locked
+      - run: cargo check --locked --target wasm32-unknown-unknown
+      - run: bash scripts/wasm-runner.sh
+      - name: Run identical vectors on wasm
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo test --locked --target wasm32-unknown-unknown --test vectors
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-lock
+          path: |
+            Cargo.lock
+            dependency-metadata.json
+  door:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            .build/cvld -> target
+      - run: bash scripts/door-fixtures.sh
+      - run: test -f Cargo.lock || cargo generate-lockfile
+      - run: cargo metadata --locked --format-version 1 > dependency-metadata.json
+      - run: cargo test --locked --features door-vectors --test door
+      - run: bash scripts/wasm-runner.sh
+      - name: Verify the same real door bytes on wasm
+        env:
+          CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
+        run: cargo test --locked --target wasm32-unknown-unknown --features door-vectors --test door
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: door-evidence
+          include-hidden-files: true
+          path: |
+            .build/fixtures
+            .build/cvld/Cargo.lock

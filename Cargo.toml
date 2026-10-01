@@ -1,0 +1,28 @@
+[package]
+name = "cchr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Charter: verified community trust material and monotonic revisions"
+license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
+repository = "https://github.com/corbet-foss/cchr"
+publish = false
+
+[features]
+door-vectors = []
+
+[dependencies]
+csgn = { git = "https://github.com/corbet-foss/csgn", rev = "564898cfb5b08a30c34821139a08d41884f231b2", default-features = false }
+cshm = { git = "https://github.com/corbet-foss/cshm", rev = "ded9507a56db5b3a4fb92383a578c6b624e36e76" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+url = "2"
+
+[dev-dependencies]
+csgn = { git = "https://github.com/corbet-foss/csgn", rev = "564898cfb5b08a30c34821139a08d41884f231b2", default-features = false, features = ["volatile-signer"] }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[lints.rust]
+unsafe_code = "forbid"
