@@ -47,7 +47,15 @@ jobs:
           path: |
             Cargo.lock
             dependency-metadata.json
-      - run: python3 .github/check-first-party.py
+      - name: Prepare formatting correction without executing project code
+        run: |
+          cargo fmt --all
+          git diff -- '*.rs' > rustfmt.patch
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rustfmt-patch
+          path: rustfmt.patch
+      - run: test ! -s rustfmt.patch
   check:
     needs: resolve
     runs-on: ubuntu-24.04
@@ -71,7 +79,6 @@ jobs:
           path: .
       - run: rustc --version
       - run: cargo fmt --all --check
-      - run: python3 .github/check-first-party.py
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: cargo check --locked --target wasm32-unknown-unknown
@@ -79,7 +86,7 @@ jobs:
       - name: Execute shared wasm vectors
         env:
           CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER: wasm-bindgen-test-runner
-        run: cargo test --locked --target wasm32-unknown-unknown --test vectors
+        run: cargo test --locked --target wasm32-unknown-unknown --lib --test vectors
   coverage:
     needs: [resolve, check]
     runs-on: ubuntu-24.04
@@ -150,3 +157,16 @@ jobs:
           path: |
             .build/fixtures
             .build/cvld/Cargo.lock
+  dependency-policy:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: resolved-lock
+      - run: python3 .github/check-first-party.py

@@ -249,7 +249,7 @@ dependencies = [
 [[package]]
 name = "csgn"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/csgn?rev=564898cfb5b08a30c34821139a08d41884f231b2#564898cfb5b08a30c34821139a08d41884f231b2"
+source = "git+https://github.com/corbet-foss/csgn?branch=main#564898cfb5b08a30c34821139a08d41884f231b2"
 dependencies = [
  "ciborium-ll",
  "coset",
@@ -262,7 +262,7 @@ dependencies = [
 [[package]]
 name = "cshm"
 version = "0.0.0"
-source = "git+https://github.com/corbet-foss/cshm?rev=ded9507a56db5b3a4fb92383a578c6b624e36e76#ded9507a56db5b3a4fb92383a578c6b624e36e76"
+source = "git+https://github.com/corbet-foss/cshm?branch=main#ded9507a56db5b3a4fb92383a578c6b624e36e76"
 dependencies = [
  "bigdecimal",
  "jsonschema",

@@ -420,3 +420,155 @@ fn one_expired_snapshot_refuses_the_entire_candidate_at_its_deadline() {
     );
     assert_eq!(c.current(NOW + 50).unwrap().revision(), 10);
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn origin_receipts_and_readiness_reject_invalid_boundaries() {
+    let mut s = signer();
+    let ring = s.key_ring().to_cbor();
+    for (community, minimum, observed, until) in [
+        ("beta", 1, NOW, NOW + 1),
+        ("alpha", 0, NOW, NOW + 1),
+        ("alpha", 1, NOW, NOW),
+    ] {
+        assert!(AuthenticatedOrigin::from_authenticated_response(
+            ORIGIN, community, &ring, minimum, observed, until,
+        ).is_err());
+    }
+    assert!(AuthenticatedOrigin::from_authenticated_response(
+        ORIGIN, "alpha", b"broken", 1, NOW, NOW + 1,
+    ).is_err());
+    for origin in ["invalid", "https://:secret@alpha.example.test", "https://alpha.example.test/#fragment"] {
+        assert!(Charter::new(origin, "alpha").is_err());
+    }
+    for community in [String::new(), "x".repeat(257), "a\0b".into()] {
+        assert!(Charter::new(ORIGIN, &community).is_err());
+    }
+    let feed = feed(&mut s, 10, 1);
+    let receipt = authority(&s);
+    let mut c = Charter::new(ORIGIN, "alpha").unwrap();
+    assert_eq!(c.current(NOW).unwrap_err(), Error::Unavailable);
+    assert_eq!(c.state(NOW - 1), State::Unavailable);
+    let mut early = Charter::new(ORIGIN, "alpha").unwrap();
+    assert_eq!(early.install(&bytes(&feed), &receipt, NOW - 1).unwrap_err(), Error::Unauthenticated);
+    let view = c.install(&bytes(&feed), &receipt, NOW).unwrap();
+    assert_eq!(view.community(), "alpha");
+    assert_eq!(view.schema().version, 1);
+    assert_eq!(view.schema_history().len(), 1);
+    assert_eq!(view.publication(Kind::Settings).revision(), 10);
+    assert!(view.publication(Kind::Settings).content().is_object());
+    assert_eq!(view.manifest_bytes(), serde_json::from_value::<Vec<u8>>(feed["manifest"].clone()).unwrap());
+    assert_eq!(c.state(NOW), State::Current);
+    assert_eq!(c.changes_since(11, NOW).unwrap_err(), Error::Rollback);
+    assert_eq!(Error::Unauthenticated.to_string(), "Unauthenticated");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn every_manifest_binding_and_snapshot_shape_is_enforced() {
+    let mut s = signer();
+    let receipt = authority(&s);
+    for (field, value) in [
+        ("community", json!("beta")),
+        ("revision", json!(11)),
+        ("policy_epoch", json!(2)),
+        ("key_ring", json!([])),
+        ("schema_version", json!(0)),
+    ] {
+        let mut candidate = feed(&mut s, 10, 1);
+        replace(&mut s, &mut candidate, "manifest", CoseKind::SettingsSnapshot, |p| p[field] = value);
+        assert!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&candidate), &receipt, NOW).is_err());
+    }
+    for (revision, epoch) in [(0, 1), (i64::MAX as u64 + 1, 1), (10, 0), (10, i64::MAX as u64 + 1)] {
+        let candidate = feed(&mut s, revision, epoch);
+        assert_eq!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&candidate), &receipt, NOW).unwrap_err(), Error::Incoherent);
+    }
+    for revision in [0, 11] {
+        let mut candidate = feed(&mut s, 10, 1);
+        replace(&mut s, &mut candidate, "settings", CoseKind::SettingsSnapshot, |p| p["revision"] = json!(revision));
+        assert_eq!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&candidate), &receipt, NOW).unwrap_err(), Error::Incoherent);
+    }
+    for (name, kind, content) in [
+        ("settings", CoseKind::SettingsSnapshot, json!([])),
+        ("schema", CoseKind::SchemaSnapshot, json!(null)),
+        ("schema_versions", CoseKind::SchemaSnapshot, json!(null)),
+        ("communities", CoseKind::CommunitiesSnapshot, json!(null)),
+        ("revocations", CoseKind::RevocationListSnapshot, json!(null)),
+        ("communities", CoseKind::CommunitiesSnapshot, json!([""])),
+        ("communities", CoseKind::CommunitiesSnapshot, json!(["x".repeat(257)])),
+        ("communities", CoseKind::CommunitiesSnapshot, json!(["same", "same"])),
+        ("communities", CoseKind::CommunitiesSnapshot, json!((0..257).map(|n| format!("c{n}")).collect::<Vec<_>>())),
+    ] {
+        let mut candidate = feed(&mut s, 10, 1);
+        replace(&mut s, &mut candidate, name, kind, |p| p["content"] = content);
+        assert!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&candidate), &receipt, NOW).is_err());
+    }
+    let mut huge = feed(&mut s, 10, 1);
+    huge["settings"] = json!(vec![0u8; (1 << 20) + 8193]);
+    assert_eq!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&huge), &receipt, NOW).unwrap_err(), Error::Limit);
+    let mut scalar = feed(&mut s, 10, 1);
+    replace(&mut s, &mut scalar, "settings", CoseKind::SettingsSnapshot, |p| {
+        p["content"] = json!({"boolean":true,"negative":-1,"fraction":1.5,"null":null});
+    });
+    assert!(Charter::new(ORIGIN, "alpha").unwrap().install(&bytes(&scalar), &receipt, NOW).is_ok());
+}
+
+fn history_feed(s: &mut Signer, revision: u64, epoch: u64) -> Value {
+    let mut value = feed(s, revision, epoch);
+    let first = json!({"community":"alpha","version":1,"public":[],"private":[]});
+    let second = json!({"community":"alpha","version":2,"public":[],"private":[]});
+    let changes = cshm::classify_changes(
+        &serde_json::from_value(first.clone()).unwrap(),
+        &serde_json::from_value(second.clone()).unwrap(),
+    ).unwrap();
+    replace(s, &mut value, "manifest", CoseKind::SettingsSnapshot, |p| p["schema_version"] = json!(2));
+    replace(s, &mut value, "schema", CoseKind::SchemaSnapshot, |p| p["content"] = second.clone());
+    replace(s, &mut value, "schema_versions", CoseKind::SchemaSnapshot, |p| {
+        p["content"] = json!({"purpose":"cplc.schema-versions.v1","current":2,"versions":[
+            {"schema":first,"changes":null}, {"schema":second,"changes":changes}
+        ]});
+    });
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn history_classification_and_retention_are_verified() {
+    let mut s = signer();
+    let receipt = authority(&s);
+    let original = feed(&mut s, 10, 1);
+    let mut c = Charter::new(ORIGIN, "alpha").unwrap();
+    c.install(&bytes(&original), &receipt, NOW).unwrap();
+    let next = history_feed(&mut s, 11, 2);
+    c.install(&bytes(&next), &receipt, NOW).unwrap();
+    assert_eq!(c.current(NOW).unwrap().schema_history().len(), 2);
+    for case in 0..12 {
+        let mut candidate = history_feed(&mut s, 12, 2);
+        replace(&mut s, &mut candidate, "schema_versions", CoseKind::SchemaSnapshot, |p| {
+            let h = &mut p["content"];
+            match case {
+                0 => h["purpose"] = json!("foreign"),
+                1 => h["versions"] = json!(vec![h["versions"][0].clone(); 257]),
+                2 => h["versions"][0]["schema"]["community"] = json!("beta"),
+                3 => h["versions"][0]["schema"]["version"] = json!(0),
+                4 => h["versions"][0]["changes"] = h["versions"][1]["changes"].clone(),
+                5 => h["versions"][1]["schema"]["version"] = json!(1),
+                6 => h["versions"][1]["changes"] = json!(null),
+                7 => h["versions"][1]["schema"]["version"] = json!(3),
+                8 => {
+                    h["versions"] = json!([h["versions"][1].clone()]);
+                    h["versions"][0]["changes"] = json!(null);
+                }
+                9 => h["versions"][0]["schema"]["private"] = json!([{"id":"x"}]),
+                10 => h["versions"][1]["schema"]["community"] = json!("beta"),
+                _ => h["versions"][1]["schema"]["public"] = json!([{"id":"x"}]),
+            }
+        });
+        assert!(c.install(&bytes(&candidate), &receipt, NOW).is_err(), "history case {case}");
+        assert_eq!(c.current(NOW).unwrap().revision(), 11);
+    }
+    let rollback = feed(&mut s, 12, 2);
+    assert_eq!(c.install(&bytes(&rollback), &receipt, NOW).unwrap_err(), Error::Rollback);
+    let old_epoch = history_feed(&mut s, 12, 1);
+    assert_eq!(c.install(&bytes(&old_epoch), &receipt, NOW).unwrap_err(), Error::Rollback);
+}

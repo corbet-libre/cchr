@@ -51,3 +51,7 @@ pub(crate) fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> crate::Res
     serde_json::from_slice::<Unique>(bytes).map_err(|_| crate::Error::Malformed)?;
     serde_json::from_slice(bytes).map_err(|_| crate::Error::Malformed)
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/json.rs"]
+mod tests;
