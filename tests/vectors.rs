@@ -5,6 +5,158 @@ use serde_json::{Value, json};
 const NOW: u64 = 1_800_000_000;
 const ORIGIN: &str = "https://alpha.example.test";
 
+fn with_balance(signer: &mut Signer, revision: u64, balance_revision: u64) -> Value {
+    let mut value = feed(signer, revision, 1);
+    let fixture: Value =
+        serde_json::from_slice(include_bytes!("fixtures/balance-material.json")).unwrap();
+    let mut material = fixture["material"].clone();
+    material["community"] = json!("alpha");
+    material["revision"] = json!(balance_revision);
+    value["balance"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
+    replace(
+        signer,
+        &mut value,
+        "manifest",
+        CoseKind::SettingsSnapshot,
+        |v| v["balance_revision"] = json!(balance_revision),
+    );
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn balance_is_atomic_original_signed_material_with_independent_floors() {
+    let mut signer = signer();
+    let first = with_balance(&mut signer, 10, 2);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter
+            .install(&bytes(&first), NOW)
+            .unwrap()
+            .balance()
+            .unwrap()
+            .signed_bytes(),
+        serde_json::from_value::<Vec<u8>>(first["balance"].clone()).unwrap()
+    );
+    charter.install(&bytes(&first), NOW).unwrap();
+    for case in 0..8 {
+        let mut bad = with_balance(&mut signer, 11, 2);
+        let expected = match case {
+            0 => {
+                bad.as_object_mut().unwrap().remove("balance");
+                Error::Incoherent
+            }
+            1 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| {
+                        v.as_object_mut().unwrap().remove("balance_revision");
+                    },
+                );
+                Error::Incoherent
+            }
+            2 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["balance_revision"] = json!(12),
+                );
+                Error::Incoherent
+            }
+            3 => {
+                bad = feed(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            4 => {
+                bad = with_balance(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            5 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "balance",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["manifestSha256"] = json!(vec![7; 32]),
+                );
+                Error::Equivocation
+            }
+            6 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "balance",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["purpose"] = json!("settings"),
+                );
+                Error::Incoherent
+            }
+            _ => {
+                bad["balance"][0] = json!(0);
+                Error::Signature
+            }
+        };
+        assert_eq!(charter.install(&bytes(&bad), NOW).unwrap_err(), expected);
+        assert_eq!(charter.current(NOW).unwrap().revision(), 10);
+    }
+    let next = with_balance(&mut signer, 11, 3);
+    assert_eq!(
+        charter
+            .install(&bytes(&next), NOW)
+            .unwrap()
+            .balance()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(charter.current(NOW + 500).unwrap_err(), Error::Expired);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn balance_deadline_and_duplicate_fields_apply_to_the_whole_charter() {
+    let mut signer = signer();
+    let mut value = with_balance(&mut signer, 10, 1);
+    let bytes_value: Vec<u8> = serde_json::from_value(value["balance"].clone()).unwrap();
+    let payload = signer
+        .key_ring()
+        .verify(&bytes_value, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    value["balance"] = json!(
+        signer
+            .sign(CoseKind::SettingsSnapshot, &payload, NOW, NOW + 10)
+            .unwrap()
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter.install(&bytes(&value), NOW).unwrap().valid_until(),
+        NOW + 10
+    );
+    assert_eq!(charter.current(NOW + 10).unwrap_err(), Error::Expired);
+    let duplicate = String::from_utf8(payload).unwrap().replace(
+        "\"purpose\":",
+        "\"purpose\":\"cblc.public-verifier.v1\",\"purpose\":",
+    );
+    value["balance"] = json!(
+        signer
+            .sign(
+                CoseKind::SettingsSnapshot,
+                duplicate.as_bytes(),
+                NOW,
+                NOW + 500
+            )
+            .unwrap()
+    );
+    assert!(charter.install(&bytes(&value), NOW + 10).is_err());
+}
+
 fn signer() -> Signer {
     Signer::new("alpha", SecretKey::from_seed(&mut [71; 32]), NOW - 1, 1000).unwrap()
 }
@@ -90,6 +242,26 @@ fn coherent_material_is_immutable_and_expiry_cannot_reverse() {
     assert_eq!(c.state(NOW), State::Unbootstrapped);
     let current = c.install(&bytes(&v), NOW).unwrap();
     assert_eq!(current.revision(), 10);
+    let settings = current.settings(NOW).unwrap();
+    assert_eq!(settings.community, "alpha");
+    assert_eq!(
+        settings.revision,
+        current.publication(Kind::Settings).revision()
+    );
+    assert_eq!(settings.policy_epoch, current.policy_epoch());
+    assert_eq!(settings.issued, NOW as i64);
+    assert_eq!(
+        serde_json::to_value(&settings.content).unwrap(),
+        *current.publication(Kind::Settings).content()
+    );
+    assert!(matches!(
+        current.settings(NOW - 1),
+        Err(Error::ClockRegression)
+    ));
+    assert!(matches!(
+        current.settings(current.valid_until()),
+        Err(Error::Expired)
+    ));
     assert!(current.revocations().member_revoked("revoked"));
     assert!(current.revocations().device_revoked(&[22; 32]));
     let policy = current.admission_policy("admission", NOW, 86400).unwrap();
@@ -1198,4 +1370,44 @@ fn failed_candidate_preserves_exact_deadline_and_floors() {
         charter.install(&bytes(&shortened), NOW + 50).unwrap_err(),
         Error::Rollback
     );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn original_passkey_revocations_are_explicit_and_bounded() {
+    let mut signer = signer();
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let first = feed(&mut signer, 1, 1);
+    let original = charter.install(&bytes(&first), NOW).unwrap();
+    assert_eq!(
+        original.revocations().passkey_revoked(&[9; 64]),
+        Err(Error::Unavailable)
+    );
+    let mut next = feed(&mut signer, 2, 1);
+    replace(
+        &mut signer,
+        &mut next,
+        "revocations",
+        CoseKind::RevocationListSnapshot,
+        |v| v["content"]["passkeys"] = json!([vec![9; 64]]),
+    );
+    let current = charter.install(&bytes(&next), NOW).unwrap();
+    assert_eq!(current.revocations().passkey_revoked(&[9; 64]), Ok(true));
+    assert_eq!(current.revocations().passkey_revoked(&[8; 64]), Ok(false));
+    assert_eq!(
+        current.revocations().passkey_revoked(&[]),
+        Err(Error::Malformed)
+    );
+    for invalid in [Vec::new(), vec![9; 1025]] {
+        let mut bad = feed(&mut signer, 3, 1);
+        replace(
+            &mut signer,
+            &mut bad,
+            "revocations",
+            CoseKind::RevocationListSnapshot,
+            |v| v["content"]["passkeys"] = json!([invalid]),
+        );
+        assert!(charter.install(&bytes(&bad), NOW).is_err());
+        assert_eq!(charter.current(NOW).unwrap().revision(), 2);
+    }
 }

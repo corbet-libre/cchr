@@ -68,3 +68,32 @@ executes PR code with write permissions or bypasses branch protection.
 
 [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) supplies LLVM line and
 branch measurements; the strict gate and exclusions are in [COVERAGE.md](docs/COVERAGE.md).
+
+## Balance snapshot
+
+The signed manifest may require a canonical Balance document through
+`balance_revision`. Its separate `balance` feed field must then be present with
+the exact revision, same community/epoch and strict
+`cblc.public-verifier.v1` purpose under the configured publication ring. It is
+installed atomically with all other snapshots and key transitions; its deadline
+shortens the whole view. Missing, regressed or conflicting bytes refuse and
+retain the old floors, including after expiry. A configured kind cannot later
+disappear. Duplicate payload fields are rejected at every depth.
+
+`VerifiedCharter::balance()` borrows original authenticated bytes and routing
+metadata via Beacon's shared `balance::Balance` type. Decode economic policy and
+artifact bindings with the accounting owner; this LGPL library introduces no
+second accounting schema, account-state verifier or FSL dependency. An absent
+Balance document grants no accounting capability. Public-record currentness and
+punishment remain separate feature decisions.
+
+`VerifiedCharter::settings(now)` borrows the original `crbk::Snapshot` after
+checking protected issuance time and the complete installed-feed expiry. Its
+community, revision, epoch, time and content come from the actual signed settings
+publication. Rulebook-owned projections define product keys and values; Charter
+provides no defaults, forum parser or admission result.
+
+Public passkey binding uses original csgn COSE verification plus Keyhole's portable
+`PublicCredential` type. Charter does not implement WebAuthn parsing or crypto;
+the owning G3 composition calls the maintained original Keyhole verifier after
+checking current Policy material and exact Keys challenge.

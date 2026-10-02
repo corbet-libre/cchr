@@ -12,10 +12,14 @@ publish = false
 door-vectors = []
 
 [dependencies]
+ckyh = { git = "https://github.com/corbet-foss/ckyh", branch = "main", default-features = false }
+crbk = { git = "https://github.com/corbet-foss/crbk", branch = "main" }
+cbcn = { git = "https://github.com/corbet-foss/cbcn", branch = "main" }
 cgrd = { git = "https://github.com/corbet-foss/cgrd", branch = "main", default-features = false }
 csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false }
 cshm = { git = "https://github.com/corbet-foss/cshm", branch = "main" }
 serde = { version = "1", features = ["derive"] }
+schemars = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 url = "2"
 
