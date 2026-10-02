@@ -2,35 +2,34 @@
 
 ## Scope
 
-Verify one coherent set of community trust material from the cvld door. Charter
-retains the original signed manifest and all five snapshots, current schema,
-checked schema history, revocations and monotonic revisions. It runs on native
-Rust and wasm with injected Unix-second time and deployment-configured publishing keys.
+### Purpose
 
-```rust
-# fn example(bytes: &[u8], configuration: cchr::Configuration, now: u64) -> cchr::Result<()> {
-let mut charter = cchr::Charter::new(configuration)?;
-charter.install(bytes, now)?;
-let current = charter.current(now)?;
-assert_eq!(current.community(), "alpha");
-# Ok(()) }
-```
+Verifies and retains one coherent current set of a community's signed material from cvld.
 
-`Configuration` comes from the embedding deployment: exact HTTPS origin,
-community, initial public key ring and independent feed/ring revision floors.
-Responses never authorize their own keys. Every later ring requires original
-csgn transition bytes signed by the currently installed ring. Charter owns
-verification and commits the new ring/floors only with a fully valid feed.
-No storage, network, wall-clock access, signing keys or background tasks exist.
+### Owns
 
-Charter supplies `admission_policy(action, now, maximum_snapshot_age)` to Guard's
-`check_published`. The adapter retains original signed settings and separate
-revocations. Guard returns admission only after the actual credential, device,
-profile, pins and complete Rulebook policy pass. Charter alone grants no
-admission. No replacement snapshot is signed or synthesized.
+- Installs the manifest and the five snapshot kinds (settings, current schema, schema versions with classifications, community directory, revocations) as one all-or-nothing replacement, with monotonic revision and epoch floors.
+- Provides the immutable verified view (original signed bytes, revisions, effective policy epoch, schema and history, revocation membership) that cgrd and Gather read.
+- Is reusable by reference on member devices.
 
-See [the implemented contract](docs/CONTRACT.md). LGPL-3.0-only WITH
-LGPL-3.0-linking-exception; not published to package registries.
+### Never
+
+- Does not decide admission.
+- Does not trust a signing ring because it signs itself, mix epochs, ignore separate revocations, translate rich policies into conjunctive settings, sign replacement snapshots, or store member data.
+- Does not fetch (fetching belongs to cnvy) and does not read a wall clock.
+- Does not carry schema editing methods.
+
+### States
+
+Unbootstrapped to Verifying to Current; expired, missing, or regressed-time reads lead to Unavailable; an invalid candidate leaves the current state and floors unchanged.
+
+### Test obligations
+
+- A real cvld feed installs only with authenticated bootstrap; wrong purpose or community, rollback, equal revision with different bytes, mixed epochs, expired snapshots, and missing kinds fail.
+- Rotation accepts authorized retained keys, while a candidate ring never authenticates itself.
+- Vectors cover real all, any, and k-of-n rules with revoked devices, and unsupported material refuses attendance.
+- Ordinary member activity leaves feed bytes unchanged.
+- Identical vectors run natively and on wasm, with install and update load coverage.
 
 ## Reuse and alternatives
 
