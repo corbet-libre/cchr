@@ -18,6 +18,8 @@ pub(crate) struct Feed {
     pub revocations: Vec<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub balance: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_board: Option<Vec<u8>>,
 }
 
 #[derive(Deserialize)]
@@ -31,6 +33,8 @@ pub(crate) struct Manifest {
     pub schema_version: u32,
     #[serde(default)]
     pub balance_revision: Option<u64>,
+    #[serde(default)]
+    pub root_board_revision: Option<u64>,
 }
 
 #[derive(Deserialize)]

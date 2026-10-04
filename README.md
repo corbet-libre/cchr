@@ -97,3 +97,17 @@ Public passkey binding uses original csgn COSE verification plus Keyhole's porta
 `PublicCredential` type. Charter does not implement WebAuthn parsing or crypto;
 the owning G3 composition calls the maintained original Keyhole verifier after
 checking current Policy material and exact Keys challenge.
+
+## Common root-board publication
+
+`VerifiedCharter::root_board()` returns Policy's authenticated public descriptor
+publication when the signed manifest requires `root_board_revision`. Its original
+COSE bytes install atomically, shorten the complete deadline and retain independent
+revision/equivocation and presence floors even after expiry. Routing uses the
+exact `cplc.root-board.v1` purpose, configured community and manifest epoch.
+
+This is the same byte-ownership boundary as Balance. Charter adds no CPSD
+crypto dependency: a consumer obtains a current view, decodes `Payload.descriptor`
+with original CPSD, and checks descriptor scope, epoch and lifetime before use.
+Authenticated malformed descriptor bytes provide no decoded capability, role or
+credential. No holder, source-community or member activity data enters this field.

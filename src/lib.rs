@@ -124,6 +124,7 @@ pub struct VerifiedCharter {
     history: Vec<SchemaVersion>,
     revocations: Revocations,
     balance: Option<cbcn::balance::Balance>,
+    root_board: Option<cbcn::root_board::RootBoard>,
 }
 impl VerifiedCharter {
     pub fn community(&self) -> &str {
@@ -172,6 +173,11 @@ impl VerifiedCharter {
     /// capability; the accounting owner must still check economic/artifact semantics.
     pub fn balance(&self) -> Option<&cbcn::balance::Balance> {
         self.balance.as_ref()
+    }
+    /// Authenticated public owner bytes. Consumers must decode with CPSD and
+    /// check descriptor scope, epoch and lifetime against this current view.
+    pub fn root_board(&self) -> Option<&cbcn::root_board::RootBoard> {
+        self.root_board.as_ref()
     }
     /// Borrow original authenticated publications for Guard. This is not an
     /// admission: Guard still requires a valid credential, device binding,
@@ -389,6 +395,34 @@ impl Charter {
                 .check_successor(previous)
                 .map_err(balance_error)?;
         }
+        let root_board = match (&feed.root_board, manifest.root_board_revision) {
+            (None, None) => None,
+            (Some(bytes), Some(revision)) if revision <= feed.revision => {
+                let material = cbcn::root_board::RootBoard::verify(
+                    &ring,
+                    bytes,
+                    feed.policy_epoch,
+                    revision,
+                    now,
+                )
+                .map_err(balance_error)?;
+                let _: Value = json::decode(material.payload())?;
+                deadline = deadline.min(material.valid_until());
+                Some(material)
+            }
+            _ => return Err(Error::Incoherent),
+        };
+        if let Some(previous) = self
+            .current
+            .as_ref()
+            .and_then(|view| view.root_board.as_ref())
+        {
+            root_board
+                .as_ref()
+                .ok_or(Error::Rollback)?
+                .check_successor(previous)
+                .map_err(balance_error)?;
+        }
         let mut publications = Vec::with_capacity(5);
         for (kind, cose) in KINDS.into_iter().zip([
             feed.settings,
@@ -499,6 +533,7 @@ impl Charter {
             history: history.versions,
             revocations,
             balance,
+            root_board,
         });
         self.ring = ring;
         self.ring_revision = ring_revision;

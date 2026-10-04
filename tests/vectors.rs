@@ -1411,3 +1411,220 @@ fn original_passkey_revocations_are_explicit_and_bounded() {
         assert_eq!(charter.current(NOW).unwrap().revision(), 2);
     }
 }
+
+fn with_root_board(signer: &mut Signer, revision: u64, board_revision: u64) -> Value {
+    let mut value = feed(signer, revision, 1);
+    let descriptor: Vec<u8> = include_bytes!("fixtures/root-board-public.bin").to_vec();
+    let material = json!({"purpose":"cplc.root-board.v1","community":"alpha","revision":board_revision,"policy_epoch":1,"descriptor":descriptor});
+    value["root_board"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
+    replace(
+        signer,
+        &mut value,
+        "manifest",
+        CoseKind::SettingsSnapshot,
+        |v| v["root_board_revision"] = json!(board_revision),
+    );
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn root_board_is_atomic_original_signed_material_with_independent_floors() {
+    let mut signer = signer();
+    let first = with_root_board(&mut signer, 10, 2);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter
+            .install(&bytes(&first), NOW)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .signed_bytes(),
+        serde_json::from_value::<Vec<u8>>(first["root_board"].clone()).unwrap()
+    );
+    charter.install(&bytes(&first), NOW).unwrap();
+    for case in 0..9 {
+        let mut bad = with_root_board(&mut signer, 11, 2);
+        let expected = match case {
+            0 => {
+                bad.as_object_mut().unwrap().remove("root_board");
+                Error::Incoherent
+            }
+            1 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| {
+                        v.as_object_mut().unwrap().remove("root_board_revision");
+                    },
+                );
+                Error::Incoherent
+            }
+            2 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["root_board_revision"] = json!(12),
+                );
+                Error::Incoherent
+            }
+            3 => {
+                bad = feed(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            4 => {
+                bad = with_root_board(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            5 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["descriptor"] = json!(vec![7; 32]),
+                );
+                Error::Equivocation
+            }
+            6 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["purpose"] = json!("settings"),
+                );
+                Error::Incoherent
+            }
+            7 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["community"] = json!("beta"),
+                );
+                Error::Incoherent
+            }
+            _ => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["policy_epoch"] = json!(2),
+                );
+                Error::Incoherent
+            }
+        };
+        assert_eq!(
+            charter.install(&bytes(&bad), NOW).unwrap_err(),
+            expected,
+            "case {case}"
+        );
+        assert_eq!(charter.current(NOW).unwrap().revision(), 10);
+    }
+    let next = with_root_board(&mut signer, 11, 3);
+    assert_eq!(
+        charter
+            .install(&bytes(&next), NOW)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(charter.current(NOW + 500).unwrap_err(), Error::Expired);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn root_board_deadline_kind_signature_duplicates_and_floor_survives_expiry() {
+    let mut signer = signer();
+    let mut value = with_root_board(&mut signer, 10, 2);
+    let cose: Vec<u8> = serde_json::from_value(value["root_board"].clone()).unwrap();
+    let payload = signer
+        .key_ring()
+        .verify(&cose, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    value["root_board"] = json!(
+        signer
+            .sign(CoseKind::SettingsSnapshot, &payload, NOW, NOW + 10)
+            .unwrap()
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter.install(&bytes(&value), NOW).unwrap().valid_until(),
+        NOW + 10
+    );
+    assert_eq!(charter.current(NOW + 10).unwrap_err(), Error::Expired);
+    let mut bad_kind = with_root_board(&mut signer, 11, 3);
+    let raw: Vec<u8> = serde_json::from_value(bad_kind["root_board"].clone()).unwrap();
+    let inner = signer
+        .key_ring()
+        .verify(&raw, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    bad_kind["root_board"] = json!(
+        signer
+            .sign(CoseKind::SchemaSnapshot, &inner, NOW, NOW + 500)
+            .unwrap()
+    );
+    assert_eq!(
+        charter.install(&bytes(&bad_kind), NOW + 10).unwrap_err(),
+        Error::Signature
+    );
+    let mut tampered = with_root_board(&mut signer, 11, 3);
+    tampered["root_board"][0] = json!(0);
+    assert_eq!(
+        charter.install(&bytes(&tampered), NOW + 10).unwrap_err(),
+        Error::Signature
+    );
+    let duplicate = String::from_utf8(payload).unwrap().replace(
+        "\"purpose\":",
+        "\"purpose\":\"cplc.root-board.v1\",\"purpose\":",
+    );
+    value["root_board"] = json!(
+        signer
+            .sign(
+                CoseKind::SettingsSnapshot,
+                duplicate.as_bytes(),
+                NOW,
+                NOW + 500
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        charter.install(&bytes(&value), NOW + 10).unwrap_err(),
+        Error::Incoherent
+    );
+    let dropped = feed(&mut signer, 11, 1);
+    assert_eq!(
+        charter.install(&bytes(&dropped), NOW + 10).unwrap_err(),
+        Error::Rollback
+    );
+    let next = with_root_board(&mut signer, 11, 3);
+    charter.install(&bytes(&next), NOW + 10).unwrap();
+    assert_eq!(
+        charter
+            .current(NOW + 10)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(
+        charter
+            .install(&bytes(&with_root_board(&mut signer, 12, 2)), NOW + 10)
+            .unwrap_err(),
+        Error::Rollback
+    );
+}
