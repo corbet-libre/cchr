@@ -138,8 +138,54 @@ fn invalid_candidates_never_partially_replace_the_installed_set() {
     let old = feed(&mut s, 10, 1);
     let mut c = new_charter(ORIGIN, "alpha").unwrap();
     c.install(&bytes(&old), NOW).unwrap();
+    let expected_revision = 10;
+    let expected_epoch = 1;
+    let expected_deadline = NOW + 500;
+    let expected_manifest: Vec<u8> = serde_json::from_value(old["manifest"].clone()).unwrap();
+    let expected_settings: Vec<u8> = serde_json::from_value(old["settings"].clone()).unwrap();
+    let expected_schema: Vec<u8> = serde_json::from_value(old["schema"].clone()).unwrap();
+    let expected_versions: Vec<u8> =
+        serde_json::from_value(old["schema_versions"].clone()).unwrap();
+    let expected_communities: Vec<u8> = serde_json::from_value(old["communities"].clone()).unwrap();
+    let expected_revocations: Vec<u8> = serde_json::from_value(old["revocations"].clone()).unwrap();
     for i in 0..10 {
         let mut candidate = feed(&mut s, 11, 2);
+        let (label, expected): (&str, Error) = match i {
+            0 => (
+                "missing revocations snapshot leaves no coherent set",
+                Error::Malformed,
+            ),
+            1 => (
+                "revocations reusing settings signature keeps separate revocations",
+                Error::Signature,
+            ),
+            2 => (
+                "schema epoch differing from feed epoch is incoherent",
+                Error::Incoherent,
+            ),
+            3 => (
+                "manifest with wrong purpose is incoherent",
+                Error::Incoherent,
+            ),
+            4 => (
+                "communities snapshot for another community is incoherent",
+                Error::Incoherent,
+            ),
+            5 => (
+                "schema history current differing from installed schema is incoherent",
+                Error::Incoherent,
+            ),
+            6 => ("empty schema history is incoherent", Error::Incoherent),
+            7 => (
+                "settings revision below the installed floor is rollback",
+                Error::Rollback,
+            ),
+            8 => ("corrupted manifest signature is rejected", Error::Signature),
+            _ => (
+                "schema version differing from the manifest is incoherent",
+                Error::Incoherent,
+            ),
+        };
         match i {
             0 => {
                 candidate.as_object_mut().unwrap().remove("revocations");
@@ -200,8 +246,41 @@ fn invalid_candidates_never_partially_replace_the_installed_set() {
                 |p| p["content"]["version"] = json!(2),
             ),
         }
-        assert!(c.install(&bytes(&candidate), NOW).is_err(), "case {i}");
-        assert_eq!(c.current(NOW).unwrap().revision(), 10);
+        assert_eq!(
+            c.install(&bytes(&candidate), NOW).unwrap_err(),
+            expected,
+            "case {i} {label}"
+        );
+        let view = c.current(NOW).unwrap();
+        assert_eq!(view.revision(), expected_revision, "case {i} {label}");
+        assert_eq!(view.policy_epoch(), expected_epoch, "case {i} {label}");
+        assert_eq!(view.valid_until(), expected_deadline, "case {i} {label}");
+        assert_eq!(view.manifest_bytes(), expected_manifest, "case {i} {label}");
+        assert_eq!(
+            view.publication(Kind::Settings).signed_bytes(),
+            expected_settings,
+            "case {i} {label}"
+        );
+        assert_eq!(
+            view.publication(Kind::Schema).signed_bytes(),
+            expected_schema,
+            "case {i} {label}"
+        );
+        assert_eq!(
+            view.publication(Kind::SchemaVersions).signed_bytes(),
+            expected_versions,
+            "case {i} {label}"
+        );
+        assert_eq!(
+            view.publication(Kind::Communities).signed_bytes(),
+            expected_communities,
+            "case {i} {label}"
+        );
+        assert_eq!(
+            view.publication(Kind::Revocations).signed_bytes(),
+            expected_revocations,
+            "case {i} {label}"
+        );
     }
     let next = feed(&mut s, 11, 2);
     c.install(&bytes(&next), NOW).unwrap();
