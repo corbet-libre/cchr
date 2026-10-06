@@ -4,7 +4,8 @@ project = "cchr"
 [checks.verify]
 kind = "commands"
 commands = [["bash", ".ci/verify.sh"]]
-cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["jq", "--version"], ["curl", "--version"], ["node", "--version"], ["python3", "--version"], ["rustup", "run", "nightly", "rustc", "-vV"], ["rustup", "run", "nightly", "cargo", "llvm-cov", "--version"]]
+cache_tools = [["rustc", "-vV"], ["cargo", "--version"], ["jq", "--version"], ["curl", "--version"], ["node", "--version"], ["python3", "--version"], ["clang", "--version"], ["pkg-config", "--version"], ["openssl", "version"], ["rustup", "run", "nightly", "rustc", "-vV"], ["rustup", "run", "nightly", "cargo", "llvm-cov", "--version"]]
+cache_env = ["PKG_CONFIG_PATH", "NIX_CFLAGS_COMPILE", "NIX_LDFLAGS", "LD_LIBRARY_PATH"]
 cache_outputs = ["coverage.json", "coverage.lcov", "coverage.txt", "dependency-metadata.json"]
 
 [render]

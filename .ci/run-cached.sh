@@ -74,5 +74,9 @@ node --version
 python3 --version
 rustup run nightly rustc -vV
 rustup run nightly cargo llvm-cov --version
-"$CCID_BIN" cached --repo "$PWD" --check verify
-test -s ".ccid/results/verify.jsonl"
+# door-fixtures.sh builds and runs OpenSSL-linked code in a temp cvld
+# checkout, so pkg-config, OpenSSL dev headers and shared libs, and a C
+# compiler/linker must resolve; execute the check inside the pinned shell
+# (NAR-pinned revision in check-shell.nix, same pin as cssr).
+# Re-prepend the verified ccid directory inside the shell so `ccid` on PATH stays exact.
+nix-shell .ci/check-shell.nix --run 'exec 2>&1; export PATH="$(dirname "$CCID_BIN"):$PATH"; set -e; pkg-config --version; openssl version; "$CCID_BIN" cached --repo "$PWD" --check verify; test -s ".ccid/results/verify.jsonl"'
