@@ -1,6 +1,9 @@
 //! Charter verifies cvld's original public bytes. It never admits a member.
 #![forbid(unsafe_code)]
 mod json;
+mod passkeys;
+pub use passkeys::VerifiedPasskeyBinding;
+pub use passkeys::VerifiedPasskeyCertificate;
 mod wire;
 use serde_json::Value;
 use std::fmt;
@@ -35,7 +38,8 @@ const MAX_COSE_BYTES: usize = (1 << 20) + 8192;
 
 /// Public publishing authority from trusted per-community deployment configuration.
 /// Never populate this value from a feed response or member request.
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Configuration {
     pub origin: String,
     pub community: String,
@@ -91,6 +95,7 @@ const KINDS: [Kind; 5] = [
 /// Immutable authenticated publication; its original signature bytes are retained.
 pub struct Publication {
     revision: u64,
+    issued_at: u64,
     bytes: Vec<u8>,
     content: Value,
 }
@@ -115,9 +120,12 @@ pub struct VerifiedCharter {
     ring: csgn::KeyRing,
     manifest: Vec<u8>,
     publications: [Publication; 5],
+    settings: crbk::Snapshot,
     schema: cshm::Schema,
     history: Vec<SchemaVersion>,
     revocations: Revocations,
+    balance: Option<cbcn::balance::Balance>,
+    root_board: Option<cbcn::root_board::RootBoard>,
 }
 impl VerifiedCharter {
     pub fn community(&self) -> &str {
@@ -141,6 +149,18 @@ impl VerifiedCharter {
     pub fn publication(&self, kind: Kind) -> &Publication {
         &self.publications[kind.index()]
     }
+    /// Original authenticated Rulebook snapshot, including protected issuance
+    /// time. Product owners apply their canonical setting projection to this
+    /// borrowed value; Charter does not invent setting keys or defaults.
+    pub fn settings(&self, now: u64) -> Result<&crbk::Snapshot> {
+        if now < self.publication(Kind::Settings).issued_at {
+            return Err(Error::ClockRegression);
+        }
+        if now >= self.deadline {
+            return Err(Error::Expired);
+        }
+        Ok(&self.settings)
+    }
     pub fn schema(&self) -> &cshm::Schema {
         &self.schema
     }
@@ -149,6 +169,16 @@ impl VerifiedCharter {
     }
     pub fn revocations(&self) -> &Revocations {
         &self.revocations
+    }
+    /// Original authenticated accounting document. Absence provides no accounting
+    /// capability; the accounting owner must still check economic/artifact semantics.
+    pub fn balance(&self) -> Option<&cbcn::balance::Balance> {
+        self.balance.as_ref()
+    }
+    /// Authenticated public owner bytes. Consumers must decode with CPSD and
+    /// check descriptor scope, epoch and lifetime against this current view.
+    pub fn root_board(&self) -> Option<&cbcn::root_board::RootBoard> {
+        self.root_board.as_ref()
     }
     /// Borrow original authenticated publications for Guard. This is not an
     /// admission: Guard still requires a valid credential, device binding,
@@ -346,6 +376,54 @@ impl Charter {
             }
         }
         let mut deadline = signed.valid_until();
+        let balance = match (&feed.balance, manifest.balance_revision) {
+            (None, None) => None,
+            (Some(bytes), Some(revision)) if revision <= feed.revision => {
+                let material =
+                    cbcn::balance::Balance::verify(&ring, bytes, feed.policy_epoch, revision, now)
+                        .map_err(balance_error)?;
+                // Apply the same duplicate-field policy at every payload depth.
+                let _: Value = json::decode(material.payload())?;
+                deadline = deadline.min(material.valid_until());
+                Some(material)
+            }
+            _ => return Err(Error::Incoherent),
+        };
+        if let Some(previous) = self.current.as_ref().and_then(|view| view.balance.as_ref()) {
+            balance
+                .as_ref()
+                .ok_or(Error::Rollback)?
+                .check_successor(previous)
+                .map_err(balance_error)?;
+        }
+        let root_board = match (&feed.root_board, manifest.root_board_revision) {
+            (None, None) => None,
+            (Some(bytes), Some(revision)) if revision <= feed.revision => {
+                let material = cbcn::root_board::RootBoard::verify(
+                    &ring,
+                    bytes,
+                    feed.policy_epoch,
+                    revision,
+                    now,
+                )
+                .map_err(balance_error)?;
+                let _: Value = json::decode(material.payload())?;
+                deadline = deadline.min(material.valid_until());
+                Some(material)
+            }
+            _ => return Err(Error::Incoherent),
+        };
+        if let Some(previous) = self
+            .current
+            .as_ref()
+            .and_then(|view| view.root_board.as_ref())
+        {
+            root_board
+                .as_ref()
+                .ok_or(Error::Rollback)?
+                .check_successor(previous)
+                .map_err(balance_error)?;
+        }
         let mut publications = Vec::with_capacity(5);
         for (kind, cose) in KINDS.into_iter().zip([
             feed.settings,
@@ -380,17 +458,25 @@ impl Charter {
                 }
             }
             deadline = deadline.min(signed.valid_until());
+            let issued_at = signed.issued_at();
             publications.push(Publication {
                 revision: doc.revision,
+                issued_at,
                 bytes: cose,
                 content: doc.content,
             });
         }
         let publications: [Publication; 5] =
             publications.try_into().map_err(|_| Error::Incoherent)?;
-        if !publications[0].content.is_object() {
-            return Err(Error::Malformed);
-        }
+        let settings = crbk::Snapshot {
+            community: self.community.clone(),
+            kind: crbk::SnapshotKind::Settings,
+            revision: publications[0].revision,
+            policy_epoch: feed.policy_epoch,
+            issued: i64::try_from(publications[0].issued_at).map_err(|_| Error::Malformed)?,
+            content: serde_json::from_value(publications[0].content.clone())
+                .map_err(|_| Error::Malformed)?,
+        };
         let schema: cshm::Schema = serde_json::from_value(publications[1].content.clone())
             .map_err(|_| Error::Malformed)?;
         schema
@@ -426,8 +512,15 @@ impl Charter {
         {
             return Err(Error::Incoherent);
         }
-        let revocations = serde_json::from_value(publications[4].content.clone())
+        let revocations: Revocations = serde_json::from_value(publications[4].content.clone())
             .map_err(|_| Error::Malformed)?;
+        if revocations
+            .passkeys
+            .as_ref()
+            .is_some_and(|ids| ids.iter().any(|id| id.is_empty() || id.len() > 1024))
+        {
+            return Err(Error::Malformed);
+        }
         self.current = Some(VerifiedCharter {
             community: self.community.clone(),
             revision: feed.revision,
@@ -436,13 +529,24 @@ impl Charter {
             ring: ring.clone(),
             manifest: feed.manifest,
             publications,
+            settings,
             schema,
             history: history.versions,
             revocations,
+            balance,
+            root_board,
         });
         self.ring = ring;
         self.ring_revision = ring_revision;
         self.current(now)
+    }
+}
+fn balance_error(error: cbcn::Error) -> Error {
+    match error {
+        cbcn::Error::Signature => Error::Signature,
+        cbcn::Error::Rollback => Error::Rollback,
+        cbcn::Error::Equivocation => Error::Equivocation,
+        _ => Error::Incoherent,
     }
 }
 fn validate_history(history: &wire::History, schema: &cshm::Schema) -> Result<()> {
