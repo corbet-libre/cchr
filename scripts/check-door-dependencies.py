@@ -22,8 +22,8 @@ def check(packages):
 
 
 if __name__ == '__main__':
-    current = {'name': 'ckyh', 'source': 'git+https://github.com/corbet-foss/ckyh?branch=main#' + 'a' * 40}
-    retired = {'name': 'cpky', 'source': 'git+https://github.com/corbet-foss/cpky?branch=main#' + 'b' * 40}
+    current = {'name': 'ckyh', 'source': 'git+https://git.corbet.ch/corbet-foss/ckyh?branch=main#' + 'a' * 40}
+    retired = {'name': 'cpky', 'source': 'git+https://git.corbet.ch/corbet-foss/cpky?branch=main#' + 'b' * 40}
     check([current])
     for invalid in ([], [retired], [current, retired]):
         try:
