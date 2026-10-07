@@ -10,7 +10,7 @@ def check(packages):
     keyhole = False
     for package in packages:
         source = urlsplit(package.get('source', '').removeprefix('git+'))
-        if source.hostname != 'github.com':
+        if source.hostname != 'git.corbet.ch':
             continue
         path = source.path.rstrip('/').removesuffix('.git').lower()
         if path == '/corbet-foss/cpky':
@@ -22,8 +22,8 @@ def check(packages):
 
 
 if __name__ == '__main__':
-    current = {'name': 'ckyh', 'source': 'git+https://github.com/corbet-foss/ckyh?branch=main#' + 'a' * 40}
-    retired = {'name': 'cpky', 'source': 'git+https://github.com/corbet-foss/cpky?branch=main#' + 'b' * 40}
+    current = {'name': 'ckyh', 'source': 'git+https://git.corbet.ch/corbet-foss/ckyh?branch=main#' + 'a' * 40}
+    retired = {'name': 'cpky', 'source': 'git+https://git.corbet.ch/corbet-foss/cpky?branch=main#' + 'b' * 40}
     check([current])
     for invalid in ([], [retired], [current, retired]):
         try:
