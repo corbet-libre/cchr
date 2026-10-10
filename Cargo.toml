@@ -13,12 +13,12 @@ door-vectors = []
 
 [dependencies]
 webauthn-rs-proto = "0.5.5"
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh.git", branch = "v01", default-features = false }
-crbk = { git = "https://git.corbet.ch/corbet-foss/crbk.git", branch = "v01", default-features = false }
-cbcn = { git = "https://git.corbet.ch/corbet-foss/cbcn.git", branch = "v01" }
-cgrd = { git = "https://git.corbet.ch/corbet-foss/cgrd.git", branch = "v01", default-features = false }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn.git", branch = "v01", default-features = false }
-cshm = { git = "https://git.corbet.ch/corbet-foss/cshm.git", branch = "v01" }
+ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
+crbk = { git = "https://git.corbet.ch/corbet-foss/crbk", branch = "main", default-features = false }
+cbcn = { git = "https://git.corbet.ch/corbet-foss/cbcn", branch = "main" }
+cgrd = { git = "https://git.corbet.ch/corbet-foss/cgrd", branch = "main", default-features = false }
+csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false }
+cshm = { git = "https://git.corbet.ch/corbet-foss/cshm", branch = "main" }
 serde = { version = "1", features = ["derive"] }
 schemars = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
@@ -27,7 +27,7 @@ url = "2"
 [dev-dependencies]
 coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn.git", branch = "v01", default-features = false, features = ["volatile-signer"] }
+csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

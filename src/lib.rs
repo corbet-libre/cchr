@@ -182,7 +182,7 @@ impl VerifiedCharter {
     }
     /// Borrow original authenticated publications for Guard. This is not an
     /// admission: Guard still requires a valid credential, device binding,
-    /// complete rich policy, profile and pin evidence. The action is trusted
+    /// issuer admission decision, profile and pin evidence. The action is trusted
     /// application configuration, never selected by a submitted presentation.
     pub fn admission_policy<'a>(
         &'a self,
@@ -196,6 +196,7 @@ impl VerifiedCharter {
         Ok(cgrd::PublishedPolicy {
             policy: cgrd::Policy {
                 community: &self.community,
+                expected_issuance_action: action,
                 keys: &self.ring,
                 now,
                 minimum_epoch: self.epoch,
@@ -206,7 +207,6 @@ impl VerifiedCharter {
             },
             revocations: self.publication(Kind::Revocations).signed_bytes(),
             minimum_revocations_revision: self.publication(Kind::Revocations).revision(),
-            action,
         })
     }
 }

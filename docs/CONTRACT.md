@@ -102,11 +102,15 @@ leave trust bytes unchanged. Identical captured bytes execute natively and in wa
 settings and separate revocations for `cgrd::check_published`. It refuses expired
 Charters and transfers authenticated revision/epoch floors without serializing
 replacement settings. The schema bytes come from `publication(Kind::Schema)`.
-The trusted caller selects the Rulebook action. Merely constructing this adapter
-never admits anyone: Guard requires signed credential/device/profile/pin evidence
-and invokes the complete portable Rulebook evaluator. Policies requiring global
-or proof-time evidence absent from cplc credentials refuse; no authority is
-invented. Device-authority issuance at the door remains the G3 integration seam.
+The trusted caller selects the expected issuance action. The adapter forwards it
+as Guard's required `Policy.expected_issuance_action`, independently of all member
+input. Merely constructing this adapter never admits anyone: Guard requires the
+current signed v2 issuer admission decision bound to that exact action and epoch,
+plus the original device/profile/pin and revocation evidence. Private global proofs
+and proof times stay at the issuer. Missing v2 purpose or action, a different action,
+and old-epoch credentials refuse; renewal follows the issuer's explicit epoch
+migration. This does not provide the separate mandatory G2 accounting authority.
+Device-authority issuance at the door remains the G3 integration seam.
 Operational TLS and encrypted device floor persistence remain caller
 responsibilities. No full cmeet/Tor acceptance is implied.
 

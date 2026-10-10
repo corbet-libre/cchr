@@ -39,6 +39,11 @@ impl VerifiedPasskeyCertificate<'_> {
         }
         Ok(())
     }
+    /// Original registered credential ID after the same current feed checks.
+    pub fn credential_id(&self, now: u64) -> Result<&[u8]> {
+        self.current(now)?;
+        Ok(self.certificate.credential_id())
+    }
     /// Exact original WebAuthn options; no unsigned identity descriptor accepted.
     pub fn request(
         &self,

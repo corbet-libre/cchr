@@ -998,7 +998,7 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
         let credential = sign(
             &mut s,
             CoseKind::Credential,
-            json!({"community":"alpha","member":"person","handle":"mountain","schema_version":1,"policy_epoch":1,"gates":[{"gate":"voucher","provider":"community","valid_until":NOW+500}],"pins":[],"devices":[device.verifying_key().to_bytes()]}),
+            json!({"purpose":"cplc.community-credential.v2","issuance_action":"admission","community":"alpha","member":"person","handle":"mountain","schema_version":1,"policy_epoch":1,"gates":[{"gate":"voucher","provider":"community","valid_until":NOW+500}],"pins":[],"devices":[device.verifying_key().to_bytes()]}),
         );
         let body = json!({"community":"alpha","member":"person","device":device.verifying_key().to_bytes(),"credential":credential,"profile":{"scope":"public","profile":{"community":"alpha","schema_version":1,"public":{"available":true}}},"openings":[]});
         let present = |body: &Value| {
@@ -1014,6 +1014,37 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
         let signed = present(&body);
         let schema = current.publication(Kind::Schema).signed_bytes();
         assert!(cgrd::check_published(&signed, &policy, schema).is_admitted());
+        assert_eq!(policy.policy.expected_issuance_action, "admission");
+        for field in ["purpose", "issuance_action"] {
+            let mut unsigned: Value = serde_json::from_slice(
+                s.key_ring()
+                    .verify(&credential, CoseKind::Credential, NOW)
+                    .unwrap()
+                    .payload(),
+            )
+            .unwrap();
+            unsigned.as_object_mut().unwrap().remove(field);
+            let unbound = sign(&mut s, CoseKind::Credential, unsigned);
+            let mut changed = body.clone();
+            changed["credential"] = json!(unbound);
+            assert!(!cgrd::check_published(&present(&changed), &policy, schema).is_admitted());
+        }
+        let mut wrong_action: Value = serde_json::from_slice(
+            s.key_ring()
+                .verify(&credential, CoseKind::Credential, NOW)
+                .unwrap()
+                .payload(),
+        )
+        .unwrap();
+        wrong_action["issuance_action"] = json!("another.admission");
+        let mut changed = body.clone();
+        changed["credential"] = json!(sign(&mut s, CoseKind::Credential, wrong_action));
+        assert_eq!(
+            cgrd::check_published(&present(&changed), &policy, schema),
+            cgrd::Admission::Refused {
+                reasons: vec![cgrd::Refusal::Credential]
+            }
+        );
         let mut broken = signed.clone();
         broken.signature[0] ^= 1;
         assert!(!cgrd::check_published(&broken, &policy, schema).is_admitted());
@@ -1039,7 +1070,7 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
                         }
                     },
                 );
-                cgrd::Refusal::Revoked
+                Some(cgrd::Refusal::Revoked)
             } else {
                 replace(
                     &mut s,
@@ -1061,24 +1092,34 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
                         }
                     },
                 );
-                cgrd::Refusal::Gate
+                if case == 4 {
+                    Some(cgrd::Refusal::Gate)
+                } else {
+                    None
+                }
             };
             let mut restricted_charter = new_charter(ORIGIN, "alpha").unwrap();
             let current = restricted_charter
                 .install(&bytes(&restricted), NOW)
                 .unwrap();
             let policy = current.admission_policy("admission", NOW, 500).unwrap();
-            assert_eq!(
-                cgrd::check_published(
-                    &signed,
-                    &policy,
-                    current.publication(Kind::Schema).signed_bytes()
-                ),
-                cgrd::Admission::Refused {
-                    reasons: vec![expected]
-                },
-                "authenticated refusal case {case}",
+            let result = cgrd::check_published(
+                &signed,
+                &policy,
+                current.publication(Kind::Schema).signed_bytes(),
             );
+            match expected {
+                Some(expected) => assert_eq!(
+                    result,
+                    cgrd::Admission::Refused {
+                        reasons: vec![expected]
+                    },
+                    "authenticated refusal case {case}"
+                ),
+                // A v2 issuer decision binds the exact action/epoch. Its private
+                // global proofs and proof times are intentionally not exported.
+                None => assert!(result.is_admitted(), "issuer decision case {case}"),
+            }
         }
     }
 }
