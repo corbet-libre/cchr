@@ -29,6 +29,14 @@ coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
 csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Native integration tests invoke the original producer; the shipped Charter
+# library and browser graph do not depend on its service or storage implementation.
+cplc = { git = "https://git.corbet.ch/corbet-libs/cplc", branch = "main" }
+libsql = { version = "0.9", default-features = false, features = ["core"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 
