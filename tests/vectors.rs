@@ -7,11 +7,10 @@ const ORIGIN: &str = "https://alpha.example.test";
 
 fn with_balance(signer: &mut Signer, revision: u64, balance_revision: u64) -> Value {
     let mut value = feed(signer, revision, 1);
-    let fixture: Value =
-        serde_json::from_slice(include_bytes!("fixtures/balance-material.json")).unwrap();
-    let mut material = fixture["material"].clone();
-    material["community"] = json!("alpha");
-    material["revision"] = json!(balance_revision);
+    // Routing-only signed fixture. It is intentionally incomplete accounting
+    // material; the real captured owner document below is never rewritten.
+    let material = json!({"purpose":"cblc.public-verifier.v2","community":"alpha",
+        "revision":balance_revision,"policyEpoch":1,"manifestSha256":vec![1_u8;32]});
     value["balance"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
     replace(
         signer,
@@ -25,7 +24,7 @@ fn with_balance(signer: &mut Signer, revision: u64, balance_revision: u64) -> Va
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
-fn balance_is_atomic_original_signed_material_with_independent_floors() {
+fn balance_is_atomic_signed_routing_with_independent_floors() {
     let mut signer = signer();
     let first = with_balance(&mut signer, 10, 2);
     let mut charter = new_charter(ORIGIN, "alpha").unwrap();
@@ -115,6 +114,42 @@ fn balance_is_atomic_original_signed_material_with_independent_floors() {
         3
     );
     assert_eq!(charter.current(NOW + 500).unwrap_err(), Error::Expired);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn current_owner_capture_keeps_original_signature_and_legacy_capture_refuses() {
+    let current: Value =
+        serde_json::from_slice(include_bytes!("fixtures/balance-publication-v2.json")).unwrap();
+    let ring = csgn::KeyRing::from_cbor(
+        &serde_json::from_value::<Vec<u8>>(current["configuredFixtureRing"].clone()).unwrap(),
+    )
+    .unwrap();
+    let original: Vec<u8> = serde_json::from_value(current["signed"].clone()).unwrap();
+    let view = cbcn::balance::Balance::verify(&ring, &original, 1, 1, 200).unwrap();
+    assert_eq!(view.signed_bytes(), original);
+    let payload: Value = serde_json::from_slice(view.payload()).unwrap();
+    assert_eq!(payload, current["material"]);
+    assert_eq!(payload["purpose"], "cblc.public-verifier.v2");
+    assert_eq!(payload["admissionPolicyDigest"], json!(vec![3_u8; 32]));
+    assert_eq!(view.valid_until(), 900);
+    let mut damaged = original.clone();
+    *damaged.last_mut().unwrap() ^= 1;
+    assert!(matches!(
+        cbcn::balance::Balance::verify(&ring, &damaged, 1, 1, 200),
+        Err(cbcn::Error::Signature)
+    ));
+    let legacy: Value =
+        serde_json::from_slice(include_bytes!("fixtures/balance-material.json")).unwrap();
+    let ring = csgn::KeyRing::from_cbor(
+        &serde_json::from_value::<Vec<u8>>(legacy["configuredFixtureRing"].clone()).unwrap(),
+    )
+    .unwrap();
+    let signed: Vec<u8> = serde_json::from_value(legacy["signed"].clone()).unwrap();
+    assert!(matches!(
+        cbcn::balance::Balance::verify(&ring, &signed, 1, 1, 200),
+        Err(cbcn::Error::Incoherent)
+    ));
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]

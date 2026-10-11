@@ -123,7 +123,7 @@ as typed schema/classification data; the current schema version cannot regress.
 The signed manifest may require a canonical Balance document through
 `balance_revision`. Its separate `balance` feed field must then be present with
 the exact revision, same community/epoch and strict
-`cblc.public-verifier.v1` purpose under the configured publication ring. It is
+`cblc.public-verifier.v2` purpose under the configured publication ring. It is
 installed atomically with all other snapshots and key transitions; its deadline
 shortens the whole view. Missing, regressed or conflicting bytes refuse and
 retain the old floors, including after expiry. A configured kind cannot later
