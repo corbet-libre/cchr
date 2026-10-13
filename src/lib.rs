@@ -242,7 +242,10 @@ pub struct Charter {
     community: String,
     current: Option<VerifiedCharter>,
     high_water: u64,
-    ring: csgn::KeyRing,
+    /// `None` only for a fingerprint-anchored charter that has not bootstrapped.
+    ring: Option<csgn::KeyRing>,
+    /// Set when the chain root is a genesis fingerprint rather than a configured ring.
+    fingerprint: Option<[u8; csgn::FINGERPRINT_LEN]>,
     ring_revision: u64,
     minimum_revision: u64,
 }
@@ -267,8 +270,37 @@ impl Charter {
             community,
             current: None,
             high_water: 0,
-            ring,
+            ring: Some(ring),
+            fingerprint: None,
             ring_revision,
+            minimum_revision,
+        })
+    }
+    /// Anchor the community's key chain on the fingerprint of its genesis document.
+    /// The first installed feed must carry the genesis document; every later key
+    /// is accepted only through an unbroken chain of transitions from it, each
+    /// signed by the previous key. No key material is configured.
+    pub fn from_fingerprint(
+        origin: String,
+        community: String,
+        fingerprint: [u8; csgn::FINGERPRINT_LEN],
+        minimum_revision: u64,
+    ) -> Result<Self> {
+        if community.is_empty()
+            || community.len() > csgn::MAX_ISSUER_LEN
+            || community.contains('\0')
+            || minimum_revision == 0
+        {
+            return Err(Error::Scope);
+        }
+        Ok(Self {
+            origin: origin_name(&origin)?,
+            community,
+            current: None,
+            high_water: 0,
+            ring: None,
+            fingerprint: Some(fingerprint),
+            ring_revision: 0,
             minimum_revision,
         })
     }
@@ -326,18 +358,42 @@ impl Charter {
         if feed.key_transitions.len() > 256 {
             return Err(Error::Limit);
         }
-        let mut ring = self.ring.clone();
-        let mut ring_revision = self.ring_revision;
+        let genesis = match (&feed.genesis, self.fingerprint) {
+            (Some(document), Some(fingerprint)) => {
+                let genesis = csgn::verify_genesis(document).map_err(|_| Error::Signature)?;
+                if genesis.fingerprint() != fingerprint || genesis.community() != self.community {
+                    return Err(Error::Unauthenticated);
+                }
+                Some(genesis)
+            }
+            _ => None,
+        };
+        let (mut ring, start_revision) = match (&self.ring, genesis) {
+            (Some(ring), _) => (ring.clone(), self.ring_revision),
+            (None, Some(genesis)) => (genesis.ring(), 0),
+            (None, None) => return Err(Error::Unauthenticated),
+        };
+        let chained = self.fingerprint.is_some();
+        let mut ring_revision = start_revision;
         for transition in &feed.key_transitions {
             // Older retained proofs are not authority and need not remain unexpired.
-            if transition.revision <= self.ring_revision {
+            if transition.revision <= start_revision {
                 continue;
             }
             if transition.revision <= ring_revision {
                 return Err(Error::Rollback);
             }
-            let verified = csgn::verify_transition(&ring, &transition.proof, now)
-                .map_err(|_| Error::Signature)?;
+            // From a genesis fingerprint every link must exist: no gaps, so no
+            // unproven key can be slipped between two proven ones.
+            if chained && transition.revision != ring_revision + 1 {
+                return Err(Error::Incoherent);
+            }
+            let verified = if chained {
+                csgn::verify_transition_at_issue(&ring, &transition.proof)
+            } else {
+                csgn::verify_transition(&ring, &transition.proof, now)
+            }
+            .map_err(|_| Error::Signature)?;
             if verified.previous() != &ring
                 || verified.revision() != transition.revision
                 || verified.next() == verified.previous()
@@ -548,7 +604,7 @@ impl Charter {
             root_board,
             ohttp,
         });
-        self.ring = ring;
+        self.ring = Some(ring);
         self.ring_revision = ring_revision;
         self.current(now)
     }

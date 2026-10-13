@@ -8,6 +8,10 @@ pub(crate) struct Feed {
     pub revision: u64,
     pub policy_epoch: u64,
     pub key_ring: Vec<u8>,
+    /// The community's signed genesis document; required until a fingerprint-anchored
+    /// charter has bootstrapped, then must match the fingerprint when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub genesis: Option<Vec<u8>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub key_transitions: Vec<KeyTransition>,
     pub manifest: Vec<u8>,

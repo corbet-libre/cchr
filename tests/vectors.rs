@@ -1773,3 +1773,75 @@ fn signed_ohttp_directory_reaches_the_verified_charter_and_malformed_ones_do_not
         );
     }
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
+    let mut s = signer();
+    let genesis = s.genesis().unwrap();
+    let fingerprint = csgn::fingerprint(&genesis);
+    let link = |s: &mut Signer, seed: u8| {
+        let proof = s
+            .rotate_with_proof(SecretKey::from_seed(&mut [seed; 32]), NOW, NOW + 500)
+            .unwrap();
+        let link = json!({"revision": s.ring_revision(), "proof": proof});
+        s.acknowledge_transition(s.ring_revision()).unwrap();
+        link
+    };
+    let first = link(&mut s, 72);
+    let second = link(&mut s, 73);
+    let mut full = feed(&mut s, 10, 1);
+    full["genesis"] = json!(genesis);
+    full["key_transitions"] = json!([first.clone(), second.clone()]);
+    let start = || Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1);
+    // The whole chain from the genesis installs, and the head is the current ring.
+    let mut charter = start().unwrap();
+    assert_eq!(charter.state(NOW), State::Unbootstrapped);
+    charter.install(&bytes(&full), NOW).unwrap();
+    assert_eq!(
+        charter.current(NOW).unwrap().key_ring().to_cbor(),
+        s.key_ring().to_cbor()
+    );
+    // Later feeds need no genesis and no repeated links.
+    let mut later = feed(&mut s, 11, 1);
+    later["key_transitions"] = json!([second.clone()]);
+    charter.install(&bytes(&later), NOW).unwrap();
+    // A wrong fingerprint, a missing genesis, a gap, a missing link and a
+    // different community's genesis are all refused.
+    let wrong = Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), [9; 32], 1).unwrap();
+    let mut wrong = wrong;
+    assert_eq!(
+        wrong.install(&bytes(&full), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut missing = full.clone();
+    missing.as_object_mut().unwrap().remove("genesis");
+    assert_eq!(
+        start().unwrap().install(&bytes(&missing), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut gap = full.clone();
+    gap["key_transitions"] = json!([second.clone()]);
+    assert_eq!(
+        start().unwrap().install(&bytes(&gap), NOW).unwrap_err(),
+        Error::Incoherent
+    );
+    let mut short = full.clone();
+    short["key_transitions"] = json!([first.clone()]);
+    assert_eq!(
+        start().unwrap().install(&bytes(&short), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut bogus = full;
+    bogus["genesis"] = json!(
+        Signer::new("alpha", SecretKey::from_seed(&mut [5; 32]), NOW - 1, 1000)
+            .unwrap()
+            .genesis()
+            .unwrap()
+    );
+    assert_eq!(
+        start().unwrap().install(&bytes(&bogus), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    assert!(Charter::from_fingerprint(ORIGIN.into(), "".into(), fingerprint, 1).is_err());
+}
