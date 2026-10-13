@@ -5,24 +5,39 @@ edition = "2024"
 rust-version = "1.88"
 description = "Charter: verified community trust material and monotonic revisions"
 license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
-repository = "https://github.com/corbet-foss/cchr"
+repository = "https://git.corbet.ch/corbet-foss/cchr.git"
 publish = false
 
 [features]
 door-vectors = []
 
 [dependencies]
-cgrd = { git = "https://github.com/corbet-foss/cgrd", branch = "main", default-features = false }
-csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false }
-cshm = { git = "https://github.com/corbet-foss/cshm", branch = "main" }
+webauthn-rs-proto = "0.5.5"
+ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
+crbk = { git = "https://git.corbet.ch/corbet-foss/crbk", branch = "main", default-features = false }
+cblv = { git = "https://git.corbet.ch/corbet-foss/cblv.git", branch = "main", default-features = false }
+cbcn = { git = "https://git.corbet.ch/corbet-foss/cbcn", branch = "main" }
+cgrd = { git = "https://git.corbet.ch/corbet-foss/cgrd", branch = "main", default-features = false }
+csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false }
+cshm = { git = "https://git.corbet.ch/corbet-foss/cshm", branch = "main" }
 serde = { version = "1", features = ["derive"] }
+schemars = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 url = "2"
 
 [dev-dependencies]
+ohttp = { version = "0.8", default-features = false, features = ["rust-hpke"] }
 coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-csgn = { git = "https://github.com/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
+csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+# Native integration tests invoke the original producer; the shipped Charter
+# library and browser graph do not depend on its service or storage implementation.
+cplc = { git = "https://git.corbet.ch/corbet-libs/cplc", branch = "main" }
+libsql = { version = "0.9", default-features = false, features = ["core"] }
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

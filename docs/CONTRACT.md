@@ -102,14 +102,49 @@ leave trust bytes unchanged. Identical captured bytes execute natively and in wa
 settings and separate revocations for `cgrd::check_published`. It refuses expired
 Charters and transfers authenticated revision/epoch floors without serializing
 replacement settings. The schema bytes come from `publication(Kind::Schema)`.
-The trusted caller selects the Rulebook action. Merely constructing this adapter
-never admits anyone: Guard requires signed credential/device/profile/pin evidence
-and invokes the complete portable Rulebook evaluator. Policies requiring global
-or proof-time evidence absent from cplc credentials refuse; no authority is
-invented. Device-authority issuance at the door remains the G3 integration seam.
+The trusted caller selects the expected issuance action. The adapter forwards it
+as Guard's required `Policy.expected_issuance_action`, independently of all member
+input. Merely constructing this adapter never admits anyone: Guard requires the
+current signed v2 issuer admission decision bound to that exact action and epoch,
+plus the original device/profile/pin and revocation evidence. Private global proofs
+and proof times stay at the issuer. Missing v2 purpose or action, a different action,
+and old-epoch credentials refuse; renewal follows the issuer's explicit epoch
+migration. This does not provide the separate mandatory G2 accounting authority.
+Device-authority issuance at the door remains the G3 integration seam.
 Operational TLS and encrypted device floor persistence remain caller
 responsibilities. No full cmeet/Tor acceptance is implied.
 
 Archived schema definitions and their classifications are immutable across
 installs. Every previously retained version must remain present, byte-equivalent
 as typed schema/classification data; the current schema version cannot regress.
+
+## Balance snapshot
+
+The signed manifest may require a canonical Balance document through
+`balance_revision`. Its separate `balance` feed field must then be present with
+the exact revision, same community/epoch and strict
+`cblc.public-verifier.v2` purpose under the configured publication ring. It is
+installed atomically with all other snapshots and key transitions; its deadline
+shortens the whole view. Missing, regressed or conflicting bytes refuse and
+retain the old floors, including after expiry. A configured kind cannot later
+disappear. Duplicate payload fields are rejected at every depth.
+
+`VerifiedCharter::balance()` borrows original authenticated bytes and routing
+metadata via Beacon's shared `balance::Balance` type. Decode economic policy and
+artifact bindings with the accounting owner; this LGPL library introduces no
+second accounting schema, account-state verifier or FSL dependency. An absent
+Balance document grants no accounting capability. Public-record currentness and
+punishment remain separate feature decisions.
+
+## Passkey verification material
+
+`VerifiedCharter::passkey_binding(original_cose, expected_member, now)` uses the
+original Policy ring and strict duplicate-key decoder to authenticate purpose
+`cplc.passkey-lineage.v1`, exact community/member/epoch, original Keyhole descriptor
+and current member/credential-ID revocations. The signed revocation set must
+explicitly contain `passkeys`; legacy absence is Unavailable. The borrowed
+`VerifiedPasskeyBinding` retains exact COSE, original typed descriptor and the
+minimum of envelope/complete-publication deadlines. `credential(now)` checks
+issuance and expiry again. This verifies public material, not possession,
+admission, a fresh session or a lineage change. G3 owners retain those checks and
+must obtain the current Foyer/Charter after every authority await.

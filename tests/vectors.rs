@@ -1,9 +1,197 @@
+use cblv::keys::KeySource;
 use cchr::{Changes, Charter, Configuration, Error, Kind, State};
 use csgn::{Kind as CoseKind, SecretKey, Signer};
 use serde_json::{Value, json};
 
 const NOW: u64 = 1_800_000_000;
 const ORIGIN: &str = "https://alpha.example.test";
+
+fn with_balance(signer: &mut Signer, revision: u64, balance_revision: u64) -> Value {
+    let mut value = feed(signer, revision, 1);
+    // Routing-only signed fixture. It is intentionally incomplete accounting
+    // material; the real captured owner document below is never rewritten.
+    let material = json!({"purpose":"cblc.public-verifier.v2","community":"alpha",
+        "revision":balance_revision,"policyEpoch":1,"manifestSha256":vec![1_u8;32]});
+    value["balance"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
+    replace(
+        signer,
+        &mut value,
+        "manifest",
+        CoseKind::SettingsSnapshot,
+        |v| v["balance_revision"] = json!(balance_revision),
+    );
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn balance_is_atomic_signed_routing_with_independent_floors() {
+    let mut signer = signer();
+    let first = with_balance(&mut signer, 10, 2);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter
+            .install(&bytes(&first), NOW)
+            .unwrap()
+            .balance()
+            .unwrap()
+            .signed_bytes(),
+        serde_json::from_value::<Vec<u8>>(first["balance"].clone()).unwrap()
+    );
+    charter.install(&bytes(&first), NOW).unwrap();
+    for case in 0..8 {
+        let mut bad = with_balance(&mut signer, 11, 2);
+        let expected = match case {
+            0 => {
+                bad.as_object_mut().unwrap().remove("balance");
+                Error::Incoherent
+            }
+            1 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| {
+                        v.as_object_mut().unwrap().remove("balance_revision");
+                    },
+                );
+                Error::Incoherent
+            }
+            2 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["balance_revision"] = json!(12),
+                );
+                Error::Incoherent
+            }
+            3 => {
+                bad = feed(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            4 => {
+                bad = with_balance(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            5 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "balance",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["manifestSha256"] = json!(vec![7; 32]),
+                );
+                Error::Equivocation
+            }
+            6 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "balance",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["purpose"] = json!("settings"),
+                );
+                Error::Incoherent
+            }
+            _ => {
+                bad["balance"][0] = json!(0);
+                Error::Signature
+            }
+        };
+        assert_eq!(charter.install(&bytes(&bad), NOW).unwrap_err(), expected);
+        assert_eq!(charter.current(NOW).unwrap().revision(), 10);
+    }
+    let next = with_balance(&mut signer, 11, 3);
+    assert_eq!(
+        charter
+            .install(&bytes(&next), NOW)
+            .unwrap()
+            .balance()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(charter.current(NOW + 500).unwrap_err(), Error::Expired);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn current_owner_capture_keeps_original_signature_and_legacy_capture_refuses() {
+    let current: Value =
+        serde_json::from_slice(include_bytes!("fixtures/balance-publication-v2.json")).unwrap();
+    let ring = csgn::KeyRing::from_cbor(
+        &serde_json::from_value::<Vec<u8>>(current["configuredFixtureRing"].clone()).unwrap(),
+    )
+    .unwrap();
+    let original: Vec<u8> = serde_json::from_value(current["signed"].clone()).unwrap();
+    let view = cbcn::balance::Balance::verify(&ring, &original, 1, 1, 200).unwrap();
+    assert_eq!(view.signed_bytes(), original);
+    let payload: Value = serde_json::from_slice(view.payload()).unwrap();
+    assert_eq!(payload, current["material"]);
+    assert_eq!(payload["purpose"], "cblc.public-verifier.v2");
+    assert_eq!(payload["admissionPolicyDigest"], json!(vec![3_u8; 32]));
+    assert_eq!(view.valid_until(), 900);
+    let mut damaged = original.clone();
+    *damaged.last_mut().unwrap() ^= 1;
+    assert!(matches!(
+        cbcn::balance::Balance::verify(&ring, &damaged, 1, 1, 200),
+        Err(cbcn::Error::Signature)
+    ));
+    let legacy: Value =
+        serde_json::from_slice(include_bytes!("fixtures/balance-material.json")).unwrap();
+    let ring = csgn::KeyRing::from_cbor(
+        &serde_json::from_value::<Vec<u8>>(legacy["configuredFixtureRing"].clone()).unwrap(),
+    )
+    .unwrap();
+    let signed: Vec<u8> = serde_json::from_value(legacy["signed"].clone()).unwrap();
+    assert!(matches!(
+        cbcn::balance::Balance::verify(&ring, &signed, 1, 1, 200),
+        Err(cbcn::Error::Incoherent)
+    ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn balance_deadline_and_duplicate_fields_apply_to_the_whole_charter() {
+    let mut signer = signer();
+    let mut value = with_balance(&mut signer, 10, 1);
+    let bytes_value: Vec<u8> = serde_json::from_value(value["balance"].clone()).unwrap();
+    let payload = signer
+        .key_ring()
+        .verify(&bytes_value, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    value["balance"] = json!(
+        signer
+            .sign(CoseKind::SettingsSnapshot, &payload, NOW, NOW + 10)
+            .unwrap()
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter.install(&bytes(&value), NOW).unwrap().valid_until(),
+        NOW + 10
+    );
+    assert_eq!(charter.current(NOW + 10).unwrap_err(), Error::Expired);
+    let duplicate = String::from_utf8(payload).unwrap().replace(
+        "\"purpose\":",
+        "\"purpose\":\"cblc.public-verifier.v1\",\"purpose\":",
+    );
+    value["balance"] = json!(
+        signer
+            .sign(
+                CoseKind::SettingsSnapshot,
+                duplicate.as_bytes(),
+                NOW,
+                NOW + 500
+            )
+            .unwrap()
+    );
+    assert!(charter.install(&bytes(&value), NOW + 10).is_err());
+}
 
 fn signer() -> Signer {
     Signer::new("alpha", SecretKey::from_seed(&mut [71; 32]), NOW - 1, 1000).unwrap()
@@ -90,6 +278,27 @@ fn coherent_material_is_immutable_and_expiry_cannot_reverse() {
     assert_eq!(c.state(NOW), State::Unbootstrapped);
     let current = c.install(&bytes(&v), NOW).unwrap();
     assert_eq!(current.revision(), 10);
+    assert_eq!(current.fingerprint(), None);
+    let settings = current.settings(NOW).unwrap();
+    assert_eq!(settings.community, "alpha");
+    assert_eq!(
+        settings.revision,
+        current.publication(Kind::Settings).revision()
+    );
+    assert_eq!(settings.policy_epoch, current.policy_epoch());
+    assert_eq!(settings.issued, NOW as i64);
+    assert_eq!(
+        serde_json::to_value(&settings.content).unwrap(),
+        *current.publication(Kind::Settings).content()
+    );
+    assert!(matches!(
+        current.settings(NOW - 1),
+        Err(Error::ClockRegression)
+    ));
+    assert!(matches!(
+        current.settings(current.valid_until()),
+        Err(Error::Expired)
+    ));
     assert!(current.revocations().member_revoked("revoked"));
     assert!(current.revocations().device_revoked(&[22; 32]));
     let policy = current.admission_policy("admission", NOW, 86400).unwrap();
@@ -826,7 +1035,7 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
         let credential = sign(
             &mut s,
             CoseKind::Credential,
-            json!({"community":"alpha","member":"person","handle":"mountain","schema_version":1,"policy_epoch":1,"gates":[{"gate":"voucher","provider":"community","valid_until":NOW+500}],"pins":[],"devices":[device.verifying_key().to_bytes()]}),
+            json!({"purpose":"cplc.community-credential.v2","issuance_action":"admission","community":"alpha","member":"person","handle":"mountain","schema_version":1,"policy_epoch":1,"gates":[{"gate":"voucher","provider":"community","valid_until":NOW+500}],"pins":[],"devices":[device.verifying_key().to_bytes()]}),
         );
         let body = json!({"community":"alpha","member":"person","device":device.verifying_key().to_bytes(),"credential":credential,"profile":{"scope":"public","profile":{"community":"alpha","schema_version":1,"public":{"available":true}}},"openings":[]});
         let present = |body: &Value| {
@@ -842,6 +1051,37 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
         let signed = present(&body);
         let schema = current.publication(Kind::Schema).signed_bytes();
         assert!(cgrd::check_published(&signed, &policy, schema).is_admitted());
+        assert_eq!(policy.policy.expected_issuance_action, "admission");
+        for field in ["purpose", "issuance_action"] {
+            let mut unsigned: Value = serde_json::from_slice(
+                s.key_ring()
+                    .verify(&credential, CoseKind::Credential, NOW)
+                    .unwrap()
+                    .payload(),
+            )
+            .unwrap();
+            unsigned.as_object_mut().unwrap().remove(field);
+            let unbound = sign(&mut s, CoseKind::Credential, unsigned);
+            let mut changed = body.clone();
+            changed["credential"] = json!(unbound);
+            assert!(!cgrd::check_published(&present(&changed), &policy, schema).is_admitted());
+        }
+        let mut wrong_action: Value = serde_json::from_slice(
+            s.key_ring()
+                .verify(&credential, CoseKind::Credential, NOW)
+                .unwrap()
+                .payload(),
+        )
+        .unwrap();
+        wrong_action["issuance_action"] = json!("another.admission");
+        let mut changed = body.clone();
+        changed["credential"] = json!(sign(&mut s, CoseKind::Credential, wrong_action));
+        assert_eq!(
+            cgrd::check_published(&present(&changed), &policy, schema),
+            cgrd::Admission::Refused {
+                reasons: vec![cgrd::Refusal::Credential]
+            }
+        );
         let mut broken = signed.clone();
         broken.signature[0] ^= 1;
         assert!(!cgrd::check_published(&broken, &policy, schema).is_admitted());
@@ -867,7 +1107,7 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
                         }
                     },
                 );
-                cgrd::Refusal::Revoked
+                Some(cgrd::Refusal::Revoked)
             } else {
                 replace(
                     &mut s,
@@ -889,24 +1129,34 @@ fn authenticated_rich_feed_requires_real_device_and_profile_evidence() {
                         }
                     },
                 );
-                cgrd::Refusal::Gate
+                if case == 4 {
+                    Some(cgrd::Refusal::Gate)
+                } else {
+                    None
+                }
             };
             let mut restricted_charter = new_charter(ORIGIN, "alpha").unwrap();
             let current = restricted_charter
                 .install(&bytes(&restricted), NOW)
                 .unwrap();
             let policy = current.admission_policy("admission", NOW, 500).unwrap();
-            assert_eq!(
-                cgrd::check_published(
-                    &signed,
-                    &policy,
-                    current.publication(Kind::Schema).signed_bytes()
-                ),
-                cgrd::Admission::Refused {
-                    reasons: vec![expected]
-                },
-                "authenticated refusal case {case}",
+            let result = cgrd::check_published(
+                &signed,
+                &policy,
+                current.publication(Kind::Schema).signed_bytes(),
             );
+            match expected {
+                Some(expected) => assert_eq!(
+                    result,
+                    cgrd::Admission::Refused {
+                        reasons: vec![expected]
+                    },
+                    "authenticated refusal case {case}"
+                ),
+                // A v2 issuer decision binds the exact action/epoch. Its private
+                // global proofs and proof times are intentionally not exported.
+                None => assert!(result.is_admitted(), "issuer decision case {case}"),
+            }
         }
     }
 }
@@ -1197,5 +1447,589 @@ fn failed_candidate_preserves_exact_deadline_and_floors() {
     assert_eq!(
         charter.install(&bytes(&shortened), NOW + 50).unwrap_err(),
         Error::Rollback
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn original_passkey_revocations_are_explicit_and_bounded() {
+    let mut signer = signer();
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let first = feed(&mut signer, 1, 1);
+    let original = charter.install(&bytes(&first), NOW).unwrap();
+    assert_eq!(
+        original.revocations().passkey_revoked(&[9; 64]),
+        Err(Error::Unavailable)
+    );
+    let mut next = feed(&mut signer, 2, 1);
+    replace(
+        &mut signer,
+        &mut next,
+        "revocations",
+        CoseKind::RevocationListSnapshot,
+        |v| v["content"]["passkeys"] = json!([vec![9; 64]]),
+    );
+    let current = charter.install(&bytes(&next), NOW).unwrap();
+    assert_eq!(current.revocations().passkey_revoked(&[9; 64]), Ok(true));
+    assert_eq!(current.revocations().passkey_revoked(&[8; 64]), Ok(false));
+    assert_eq!(
+        current.revocations().passkey_revoked(&[]),
+        Err(Error::Malformed)
+    );
+    for invalid in [Vec::new(), vec![9; 1025]] {
+        let mut bad = feed(&mut signer, 3, 1);
+        replace(
+            &mut signer,
+            &mut bad,
+            "revocations",
+            CoseKind::RevocationListSnapshot,
+            |v| v["content"]["passkeys"] = json!([invalid]),
+        );
+        assert!(charter.install(&bytes(&bad), NOW).is_err());
+        assert_eq!(charter.current(NOW).unwrap().revision(), 2);
+    }
+}
+
+fn with_root_board(signer: &mut Signer, revision: u64, board_revision: u64) -> Value {
+    let mut value = feed(signer, revision, 1);
+    let descriptor: Vec<u8> = include_bytes!("fixtures/root-board-public.bin").to_vec();
+    let material = json!({"purpose":"cplc.root-board.v1","community":"alpha","revision":board_revision,"policy_epoch":1,"descriptor":descriptor});
+    value["root_board"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
+    replace(
+        signer,
+        &mut value,
+        "manifest",
+        CoseKind::SettingsSnapshot,
+        |v| v["root_board_revision"] = json!(board_revision),
+    );
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn root_board_is_atomic_original_signed_material_with_independent_floors() {
+    let mut signer = signer();
+    let first = with_root_board(&mut signer, 10, 2);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter
+            .install(&bytes(&first), NOW)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .signed_bytes(),
+        serde_json::from_value::<Vec<u8>>(first["root_board"].clone()).unwrap()
+    );
+    charter.install(&bytes(&first), NOW).unwrap();
+    for case in 0..9 {
+        let mut bad = with_root_board(&mut signer, 11, 2);
+        let expected = match case {
+            0 => {
+                bad.as_object_mut().unwrap().remove("root_board");
+                Error::Incoherent
+            }
+            1 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| {
+                        v.as_object_mut().unwrap().remove("root_board_revision");
+                    },
+                );
+                Error::Incoherent
+            }
+            2 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "manifest",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["root_board_revision"] = json!(12),
+                );
+                Error::Incoherent
+            }
+            3 => {
+                bad = feed(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            4 => {
+                bad = with_root_board(&mut signer, 11, 1);
+                Error::Rollback
+            }
+            5 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["descriptor"] = json!(vec![7; 32]),
+                );
+                Error::Equivocation
+            }
+            6 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["purpose"] = json!("settings"),
+                );
+                Error::Incoherent
+            }
+            7 => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["community"] = json!("beta"),
+                );
+                Error::Incoherent
+            }
+            _ => {
+                replace(
+                    &mut signer,
+                    &mut bad,
+                    "root_board",
+                    CoseKind::SettingsSnapshot,
+                    |v| v["policy_epoch"] = json!(2),
+                );
+                Error::Incoherent
+            }
+        };
+        assert_eq!(
+            charter.install(&bytes(&bad), NOW).unwrap_err(),
+            expected,
+            "case {case}"
+        );
+        assert_eq!(charter.current(NOW).unwrap().revision(), 10);
+    }
+    let next = with_root_board(&mut signer, 11, 3);
+    assert_eq!(
+        charter
+            .install(&bytes(&next), NOW)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(charter.current(NOW + 500).unwrap_err(), Error::Expired);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn root_board_deadline_kind_signature_duplicates_and_floor_survives_expiry() {
+    let mut signer = signer();
+    let mut value = with_root_board(&mut signer, 10, 2);
+    let cose: Vec<u8> = serde_json::from_value(value["root_board"].clone()).unwrap();
+    let payload = signer
+        .key_ring()
+        .verify(&cose, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    value["root_board"] = json!(
+        signer
+            .sign(CoseKind::SettingsSnapshot, &payload, NOW, NOW + 10)
+            .unwrap()
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(
+        charter.install(&bytes(&value), NOW).unwrap().valid_until(),
+        NOW + 10
+    );
+    assert_eq!(charter.current(NOW + 10).unwrap_err(), Error::Expired);
+    let mut bad_kind = with_root_board(&mut signer, 11, 3);
+    let raw: Vec<u8> = serde_json::from_value(bad_kind["root_board"].clone()).unwrap();
+    let inner = signer
+        .key_ring()
+        .verify(&raw, CoseKind::SettingsSnapshot, NOW)
+        .unwrap()
+        .payload()
+        .to_vec();
+    bad_kind["root_board"] = json!(
+        signer
+            .sign(CoseKind::SchemaSnapshot, &inner, NOW, NOW + 500)
+            .unwrap()
+    );
+    assert_eq!(
+        charter.install(&bytes(&bad_kind), NOW + 10).unwrap_err(),
+        Error::Signature
+    );
+    let mut tampered = with_root_board(&mut signer, 11, 3);
+    tampered["root_board"][0] = json!(0);
+    assert_eq!(
+        charter.install(&bytes(&tampered), NOW + 10).unwrap_err(),
+        Error::Signature
+    );
+    let duplicate = String::from_utf8(payload).unwrap().replace(
+        "\"purpose\":",
+        "\"purpose\":\"cplc.root-board.v1\",\"purpose\":",
+    );
+    value["root_board"] = json!(
+        signer
+            .sign(
+                CoseKind::SettingsSnapshot,
+                duplicate.as_bytes(),
+                NOW,
+                NOW + 500
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        charter.install(&bytes(&value), NOW + 10).unwrap_err(),
+        Error::Incoherent
+    );
+    let dropped = feed(&mut signer, 11, 1);
+    assert_eq!(
+        charter.install(&bytes(&dropped), NOW + 10).unwrap_err(),
+        Error::Rollback
+    );
+    let next = with_root_board(&mut signer, 11, 3);
+    charter.install(&bytes(&next), NOW + 10).unwrap();
+    assert_eq!(
+        charter
+            .current(NOW + 10)
+            .unwrap()
+            .root_board()
+            .unwrap()
+            .revision(),
+        3
+    );
+    assert_eq!(
+        charter
+            .install(&bytes(&with_root_board(&mut signer, 12, 2)), NOW + 10)
+            .unwrap_err(),
+        Error::Rollback
+    );
+}
+
+fn ohttp_config(id: u8) -> Vec<u8> {
+    ohttp::KeyConfig::derive(
+        id,
+        ohttp::hpke::Kem::X25519Sha256,
+        vec![ohttp::SymmetricSuite::new(
+            ohttp::hpke::Kdf::HkdfSha256,
+            ohttp::hpke::Aead::ChaCha20Poly1305,
+        )],
+        &[id; 32],
+    )
+    .unwrap()
+    .encode()
+    .unwrap()
+}
+
+fn with_ohttp(s: &mut Signer, directory: Value) -> Value {
+    let mut value = feed(s, 10, 1);
+    replace(s, &mut value, "manifest", CoseKind::SettingsSnapshot, |m| {
+        m["ohttp"] = directory
+    });
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn signed_ohttp_directory_reaches_the_verified_charter_and_malformed_ones_do_not() {
+    let mut s = signer();
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let plain = feed(&mut s, 10, 1);
+    assert!(
+        charter
+            .install(&bytes(&plain), NOW)
+            .unwrap()
+            .ohttp()
+            .is_none()
+    );
+    let entry = |id: u8| {
+        json!({"service":"api.alpha.example","key_id":id,"config":ohttp_config(id),
+            "not_before":NOW - 10,"not_after":NOW + 100})
+    };
+    let good = with_ohttp(
+        &mut s,
+        json!({"relay":"https://relay.alpha.example","keys":[entry(1),entry(2)]}),
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let verified = charter.install(&bytes(&good), NOW).unwrap();
+    let (relay, key) = verified
+        .ohttp()
+        .unwrap()
+        .current("api.alpha.example", NOW)
+        .unwrap();
+    assert_eq!(relay, "https://relay.alpha.example");
+    assert_eq!(key.key_id, 2);
+    for bad in [
+        json!({"relay":"http://relay.alpha.example","keys":[entry(1)]}),
+        json!({"relay":"https://relay.alpha.example","keys":[entry(1),entry(1)]}),
+        json!({"relay":"https://relay.alpha.example","keys":[],"extra":1}),
+    ] {
+        let candidate = with_ohttp(&mut s, bad);
+        assert!(
+            new_charter(ORIGIN, "alpha")
+                .unwrap()
+                .install(&bytes(&candidate), NOW)
+                .is_err()
+        );
+    }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
+    let mut s = signer();
+    let genesis = s.genesis().unwrap();
+    let fingerprint = csgn::fingerprint(&genesis);
+    let link = |s: &mut Signer, seed: u8| {
+        let proof = s
+            .rotate_with_proof(SecretKey::from_seed(&mut [seed; 32]), NOW, NOW + 500)
+            .unwrap();
+        let link = json!({"revision": s.ring_revision(), "proof": proof});
+        s.acknowledge_transition(s.ring_revision()).unwrap();
+        link
+    };
+    let first = link(&mut s, 72);
+    let second = link(&mut s, 73);
+    let mut full = feed(&mut s, 10, 1);
+    full["genesis"] = json!(genesis);
+    full["key_transitions"] = json!([first.clone(), second.clone()]);
+    let start = || Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1);
+    // The whole chain from the genesis installs, and the head is the current ring.
+    let mut charter = start().unwrap();
+    assert_eq!(charter.state(NOW), State::Unbootstrapped);
+    charter.install(&bytes(&full), NOW).unwrap();
+    assert_eq!(
+        charter.current(NOW).unwrap().key_ring().to_cbor(),
+        s.key_ring().to_cbor()
+    );
+    assert_eq!(
+        charter.current(NOW).unwrap().fingerprint(),
+        Some(&fingerprint)
+    );
+    // Later feeds need no genesis and no repeated links.
+    let mut later = feed(&mut s, 11, 1);
+    later["key_transitions"] = json!([second.clone()]);
+    charter.install(&bytes(&later), NOW).unwrap();
+    // A wrong fingerprint, a missing genesis, a gap, a missing link and a
+    // different community's genesis are all refused.
+    let wrong = Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), [9; 32], 1).unwrap();
+    let mut wrong = wrong;
+    assert_eq!(
+        wrong.install(&bytes(&full), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut missing = full.clone();
+    missing.as_object_mut().unwrap().remove("genesis");
+    assert_eq!(
+        start().unwrap().install(&bytes(&missing), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut gap = full.clone();
+    gap["key_transitions"] = json!([second.clone()]);
+    assert_eq!(
+        start().unwrap().install(&bytes(&gap), NOW).unwrap_err(),
+        Error::Incoherent
+    );
+    let mut short = full.clone();
+    short["key_transitions"] = json!([first.clone()]);
+    assert_eq!(
+        start().unwrap().install(&bytes(&short), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    let mut bogus = full;
+    bogus["genesis"] = json!(
+        Signer::new("alpha", SecretKey::from_seed(&mut [5; 32]), NOW - 1, 1000)
+            .unwrap()
+            .genesis()
+            .unwrap()
+    );
+    assert_eq!(
+        start().unwrap().install(&bytes(&bogus), NOW).unwrap_err(),
+        Error::Unauthenticated
+    );
+    assert!(Charter::from_fingerprint(ORIGIN.into(), "".into(), fingerprint, 1).is_err());
+}
+
+fn start_with(fingerprint: [u8; 32], pin: cchr::ChainPin) -> Charter {
+    Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+        .unwrap()
+        .with_pin(pin)
+        .unwrap()
+}
+fn old_chain(seeds: &[u8]) -> (Signer, Vec<u8>, Vec<Value>) {
+    // Founded long ago; every rotation proof has long expired at NOW.
+    let mut s = Signer::new(
+        "alpha",
+        SecretKey::from_seed(&mut [71; 32]),
+        NOW - 100_000,
+        1000,
+    )
+    .unwrap();
+    let genesis = s.genesis().unwrap();
+    let mut links = Vec::new();
+    for (i, seed) in seeds.iter().enumerate() {
+        let at = NOW - 50_000 + i as u64 * 100;
+        let proof = s
+            .rotate_with_proof(SecretKey::from_seed(&mut [*seed; 32]), at, at + 500)
+            .unwrap();
+        links.push(json!({"revision": s.ring_revision(), "proof": proof}));
+        s.acknowledge_transition(s.ring_revision()).unwrap();
+    }
+    (s, genesis, links)
+}
+fn old_feed(seeds: &[u8], with_genesis: bool) -> (Value, [u8; 32], Charter) {
+    let (mut s, genesis, links) = old_chain(seeds);
+    let fingerprint = csgn::fingerprint(&genesis);
+    let mut v = feed(&mut s, 10, 1);
+    if with_genesis {
+        v["genesis"] = json!(genesis);
+    }
+    v["key_transitions"] = json!(links);
+    let charter = Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1).unwrap();
+    (v, fingerprint, charter)
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_chain_of_expired_proofs_verifies_and_only_the_head_is_checked_against_now() {
+    let (v, _, mut charter) = old_feed(&[72, 73], true);
+    charter.install(&bytes(&v), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().chain_pin().ring_revision, 2);
+    // The head's own signatures still expire: far later the same feed is stale.
+    let (v, _, mut late) = old_feed(&[72, 73], true);
+    assert!(late.install(&bytes(&v), NOW + 10_000).is_err());
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_pinned_head_must_be_extended_exactly_and_never_rolled_back_or_forked() {
+    let (v, fingerprint, mut charter) = old_feed(&[72, 73], true);
+    charter.install(&bytes(&v), NOW).unwrap();
+    let pin = charter.current(NOW).unwrap().chain_pin();
+    let start = || {
+        Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+            .unwrap()
+            .with_pin(pin)
+            .unwrap()
+    };
+    // The same chain, and one that extends it, are accepted.
+    start().install(&bytes(&v), NOW).unwrap();
+    let (longer, _, _) = old_feed(&[72, 73, 74], true);
+    start().install(&bytes(&longer), NOW).unwrap();
+    // A shorter chain is a rollback.
+    let (shorter, _, _) = old_feed(&[72], true);
+    assert_eq!(
+        start().install(&bytes(&shorter), NOW).unwrap_err(),
+        Error::Rollback
+    );
+    // A different transition at the pinned revision is a fork, even if longer.
+    let (fork, _, _) = old_feed(&[72, 75, 76], true);
+    assert_eq!(
+        start().install(&bytes(&fork), NOW).unwrap_err(),
+        Error::Equivocation
+    );
+    // A pin on the genesis ring itself is extended by any chain.
+    let head = csgn::verify_genesis(&old_chain(&[]).1)
+        .unwrap()
+        .ring()
+        .digest();
+    let (one, _, _) = old_feed(&[72], true);
+    start_with(
+        fingerprint,
+        cchr::ChainPin {
+            ring_revision: 0,
+            head,
+        },
+    )
+    .install(&bytes(&one), NOW)
+    .unwrap();
+    // A pin only makes sense before bootstrap and on a fingerprint charter.
+    assert!(new_charter(ORIGIN, "alpha").unwrap().with_pin(pin).is_err());
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn ended_chains_come_only_from_the_signed_communities_snapshot() {
+    let mut s = signer();
+    let mut v = feed(&mut s, 10, 1);
+    let mut c = new_charter(ORIGIN, "alpha").unwrap();
+    assert!(c.install(&bytes(&v), NOW).unwrap().ended().is_empty());
+
+    let hex = "ab".repeat(32);
+    replace(
+        &mut s,
+        &mut v,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!({"communities":["alpha"],"ended":[
+            {"fingerprint":hex,"reason_class":"banned","ended_at":5},
+            {"fingerprint":"cd".repeat(32),"reason_class":"dissolved","ended_at":6}]});
+        },
+    );
+    let mut c = new_charter(ORIGIN, "alpha").unwrap();
+    let ended = c.install(&bytes(&v), NOW).unwrap().ended().to_vec();
+    assert_eq!(ended.len(), 2);
+    assert_eq!(ended[0].fingerprint, [0xab; 32]);
+    assert_eq!(ended[0].reason_class, cchr::EndReason::Banned);
+    assert_eq!(ended[1].ended_at, 6);
+
+    // Duplicates, bad fingerprints and oversized lists are refused.
+    for content in [
+        json!({"communities":[],"ended":[
+            {"fingerprint":hex,"reason_class":"banned","ended_at":1},
+            {"fingerprint":hex,"reason_class":"dissolved","ended_at":2}]}),
+        json!({"communities":[],"ended":[{"fingerprint":"AB","reason_class":"banned","ended_at":1}]}),
+    ] {
+        let mut bad = v.clone();
+        replace(
+            &mut s,
+            &mut bad,
+            "communities",
+            CoseKind::CommunitiesSnapshot,
+            |p| p["content"] = content,
+        );
+        assert!(
+            new_charter(ORIGIN, "alpha")
+                .unwrap()
+                .install(&bytes(&bad), NOW)
+                .is_err()
+        );
+    }
+    let many: Vec<Value> = (0..=cchr::MAX_ENDED as u32)
+        .map(|i| {
+            let mut f = [0u8; 32];
+            f[..4].copy_from_slice(&i.to_be_bytes());
+            let text: String = f.iter().map(|b| format!("{b:02x}")).collect();
+            json!({"fingerprint":text,"reason_class":"banned","ended_at":1})
+        })
+        .collect();
+    let mut big = v.clone();
+    replace(
+        &mut s,
+        &mut big,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!({"communities":[],"ended":many});
+        },
+    );
+    assert!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&big), NOW)
+            .is_err()
+    );
+
+    // Unsigned edits to the snapshot are refused: the entries are not outside the signature.
+    let mut forged = feed(&mut s, 10, 1);
+    forged["communities"] = v["communities"].clone();
+    forged["communities"][0] = json!(0);
+    assert!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&forged), NOW)
+            .is_err()
     );
 }
