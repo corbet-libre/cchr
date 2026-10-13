@@ -183,7 +183,7 @@ async fn signing_rotation_and_epoch_invalidation_preserve_the_common_issuer() {
             NOW,
         )
         .unwrap();
-    policy.rotate(common::key(2), NOW).await.unwrap();
+    policy.rotate(support::key(2), NOW).await.unwrap();
     let rotated = policy.trust_feed(NOW).await.unwrap();
     assert_eq!(rotated.key_transitions.len(), 1);
     let view = device
