@@ -7,7 +7,10 @@ pub use passkeys::VerifiedPasskeyCertificate;
 mod wire;
 use serde_json::Value;
 use std::fmt;
-pub use wire::{Revocations, SchemaVersion};
+pub use wire::{EndReason, Ended, Revocations, SchemaVersion};
+
+/// Most end-of-chain entries one platform feed may carry.
+pub const MAX_ENDED: usize = 4096;
 
 pub type Result<T> = std::result::Result<T, Error>;
 /// Fixed diagnostics deliberately omit payloads, identities and dependency errors.
@@ -133,6 +136,7 @@ pub struct VerifiedCharter {
     schema: cshm::Schema,
     history: Vec<SchemaVersion>,
     revocations: Revocations,
+    ended: Vec<Ended>,
     balance: Option<cbcn::balance::Balance>,
     root_board: Option<cbcn::root_board::RootBoard>,
     ohttp: Option<cblv::keys::Snapshot>,
@@ -161,6 +165,11 @@ impl VerifiedCharter {
             ring_revision: self.ring_revision,
             head: self.ring.digest(),
         }
+    }
+    /// Chains the platform has ended (dissolved or banned communities), from the
+    /// verified Communities snapshot. Empty for a community feed.
+    pub fn ended(&self) -> &[Ended] {
+        &self.ended
     }
     pub fn key_ring(&self) -> &csgn::KeyRing {
         &self.ring
@@ -609,8 +618,7 @@ impl Charter {
                 }
             }
         }
-        let communities: Vec<String> = serde_json::from_value(publications[3].content.clone())
-            .map_err(|_| Error::Malformed)?;
+        let (communities, ended) = wire::communities(publications[3].content.clone())?;
         if communities.len() > 256
             || communities.iter().any(|v| v.is_empty() || v.len() > 256)
             || communities
@@ -618,6 +626,13 @@ impl Charter {
                 .collect::<std::collections::BTreeSet<_>>()
                 .len()
                 != communities.len()
+            || ended.len() > MAX_ENDED
+            || ended
+                .iter()
+                .map(|entry| entry.fingerprint)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != ended.len()
         {
             return Err(Error::Incoherent);
         }
@@ -648,6 +663,7 @@ impl Charter {
             schema,
             history: history.versions,
             revocations,
+            ended,
             balance,
             root_board,
             ohttp,
