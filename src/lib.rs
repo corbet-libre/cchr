@@ -126,8 +126,14 @@ pub struct VerifiedCharter {
     revocations: Revocations,
     balance: Option<cbcn::balance::Balance>,
     root_board: Option<cbcn::root_board::RootBoard>,
+    ohttp: Option<cblv::keys::Snapshot>,
 }
 impl VerifiedCharter {
+    /// Oblivious HTTP relay and gateway keys from the signed manifest, if the
+    /// community publishes any. Only this verified value reaches a client.
+    pub fn ohttp(&self) -> Option<&cblv::keys::Snapshot> {
+        self.ohttp.as_ref()
+    }
     pub fn community(&self) -> &str {
         &self.community
     }
@@ -521,6 +527,11 @@ impl Charter {
         {
             return Err(Error::Malformed);
         }
+        let ohttp = manifest
+            .ohttp
+            .map(cblv::keys::Directory::verify)
+            .transpose()
+            .map_err(|_| Error::Malformed)?;
         self.current = Some(VerifiedCharter {
             community: self.community.clone(),
             revision: feed.revision,
@@ -535,6 +546,7 @@ impl Charter {
             revocations,
             balance,
             root_board,
+            ohttp,
         });
         self.ring = ring;
         self.ring_revision = ring_revision;

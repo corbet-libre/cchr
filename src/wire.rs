@@ -35,6 +35,8 @@ pub(crate) struct Manifest {
     pub balance_revision: Option<u64>,
     #[serde(default)]
     pub root_board_revision: Option<u64>,
+    #[serde(default)]
+    pub ohttp: Option<cblv::keys::Directory>,
 }
 
 #[derive(Deserialize)]

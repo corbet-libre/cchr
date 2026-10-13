@@ -1,3 +1,4 @@
+use cblv::keys::KeySource;
 use cchr::{Changes, Charter, Configuration, Error, Kind, State};
 use csgn::{Kind as CoseKind, SecretKey, Signer};
 use serde_json::{Value, json};
@@ -1703,4 +1704,72 @@ fn root_board_deadline_kind_signature_duplicates_and_floor_survives_expiry() {
             .unwrap_err(),
         Error::Rollback
     );
+}
+
+fn ohttp_config(id: u8) -> Vec<u8> {
+    ohttp::KeyConfig::derive(
+        id,
+        ohttp::hpke::Kem::X25519Sha256,
+        vec![ohttp::SymmetricSuite::new(
+            ohttp::hpke::Kdf::HkdfSha256,
+            ohttp::hpke::Aead::ChaCha20Poly1305,
+        )],
+        &[id; 32],
+    )
+    .unwrap()
+    .encode()
+    .unwrap()
+}
+
+fn with_ohttp(s: &mut Signer, directory: Value) -> Value {
+    let mut value = feed(s, 10, 1);
+    replace(s, &mut value, "manifest", CoseKind::SettingsSnapshot, |m| {
+        m["ohttp"] = directory
+    });
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn signed_ohttp_directory_reaches_the_verified_charter_and_malformed_ones_do_not() {
+    let mut s = signer();
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let plain = feed(&mut s, 10, 1);
+    assert!(
+        charter
+            .install(&bytes(&plain), NOW)
+            .unwrap()
+            .ohttp()
+            .is_none()
+    );
+    let entry = |id: u8| {
+        json!({"service":"api.alpha.example","key_id":id,"config":ohttp_config(id),
+            "not_before":NOW - 10,"not_after":NOW + 100})
+    };
+    let good = with_ohttp(
+        &mut s,
+        json!({"relay":"https://relay.alpha.example","keys":[entry(1),entry(2)]}),
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let verified = charter.install(&bytes(&good), NOW).unwrap();
+    let (relay, key) = verified
+        .ohttp()
+        .unwrap()
+        .current("api.alpha.example", NOW)
+        .unwrap();
+    assert_eq!(relay, "https://relay.alpha.example");
+    assert_eq!(key.key_id, 2);
+    for bad in [
+        json!({"relay":"http://relay.alpha.example","keys":[entry(1)]}),
+        json!({"relay":"https://relay.alpha.example","keys":[entry(1),entry(1)]}),
+        json!({"relay":"https://relay.alpha.example","keys":[],"extra":1}),
+    ] {
+        let candidate = with_ohttp(&mut s, bad);
+        assert!(
+            new_charter(ORIGIN, "alpha")
+                .unwrap()
+                .install(&bytes(&candidate), NOW)
+                .is_err()
+        );
+    }
 }
