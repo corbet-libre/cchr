@@ -1845,3 +1845,100 @@ fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
     );
     assert!(Charter::from_fingerprint(ORIGIN.into(), "".into(), fingerprint, 1).is_err());
 }
+
+fn start_with(fingerprint: [u8; 32], pin: cchr::ChainPin) -> Charter {
+    Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+        .unwrap()
+        .with_pin(pin)
+        .unwrap()
+}
+fn old_chain(seeds: &[u8]) -> (Signer, Vec<u8>, Vec<Value>) {
+    // Founded long ago; every rotation proof has long expired at NOW.
+    let mut s = Signer::new(
+        "alpha",
+        SecretKey::from_seed(&mut [71; 32]),
+        NOW - 100_000,
+        1000,
+    )
+    .unwrap();
+    let genesis = s.genesis().unwrap();
+    let mut links = Vec::new();
+    for (i, seed) in seeds.iter().enumerate() {
+        let at = NOW - 50_000 + i as u64 * 100;
+        let proof = s
+            .rotate_with_proof(SecretKey::from_seed(&mut [*seed; 32]), at, at + 500)
+            .unwrap();
+        links.push(json!({"revision": s.ring_revision(), "proof": proof}));
+        s.acknowledge_transition(s.ring_revision()).unwrap();
+    }
+    (s, genesis, links)
+}
+fn old_feed(seeds: &[u8], with_genesis: bool) -> (Value, [u8; 32], Charter) {
+    let (mut s, genesis, links) = old_chain(seeds);
+    let fingerprint = csgn::fingerprint(&genesis);
+    let mut v = feed(&mut s, 10, 1);
+    if with_genesis {
+        v["genesis"] = json!(genesis);
+    }
+    v["key_transitions"] = json!(links);
+    let charter = Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1).unwrap();
+    (v, fingerprint, charter)
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_chain_of_expired_proofs_verifies_and_only_the_head_is_checked_against_now() {
+    let (v, _, mut charter) = old_feed(&[72, 73], true);
+    charter.install(&bytes(&v), NOW).unwrap();
+    assert_eq!(charter.current(NOW).unwrap().chain_pin().ring_revision, 2);
+    // The head's own signatures still expire: far later the same feed is stale.
+    let (v, _, mut late) = old_feed(&[72, 73], true);
+    assert!(late.install(&bytes(&v), NOW + 10_000).is_err());
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_pinned_head_must_be_extended_exactly_and_never_rolled_back_or_forked() {
+    let (v, fingerprint, mut charter) = old_feed(&[72, 73], true);
+    charter.install(&bytes(&v), NOW).unwrap();
+    let pin = charter.current(NOW).unwrap().chain_pin();
+    let start = || {
+        Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+            .unwrap()
+            .with_pin(pin)
+            .unwrap()
+    };
+    // The same chain, and one that extends it, are accepted.
+    start().install(&bytes(&v), NOW).unwrap();
+    let (longer, _, _) = old_feed(&[72, 73, 74], true);
+    start().install(&bytes(&longer), NOW).unwrap();
+    // A shorter chain is a rollback.
+    let (shorter, _, _) = old_feed(&[72], true);
+    assert_eq!(
+        start().install(&bytes(&shorter), NOW).unwrap_err(),
+        Error::Rollback
+    );
+    // A different transition at the pinned revision is a fork, even if longer.
+    let (fork, _, _) = old_feed(&[72, 75, 76], true);
+    assert_eq!(
+        start().install(&bytes(&fork), NOW).unwrap_err(),
+        Error::Equivocation
+    );
+    // A pin on the genesis ring itself is extended by any chain.
+    let head = csgn::verify_genesis(&old_chain(&[]).1)
+        .unwrap()
+        .ring()
+        .digest();
+    let (one, _, _) = old_feed(&[72], true);
+    start_with(
+        fingerprint,
+        cchr::ChainPin {
+            ring_revision: 0,
+            head,
+        },
+    )
+    .install(&bytes(&one), NOW)
+    .unwrap();
+    // A pin only makes sense before bootstrap and on a fingerprint charter.
+    assert!(new_charter(ORIGIN, "alpha").unwrap().with_pin(pin).is_err());
+}

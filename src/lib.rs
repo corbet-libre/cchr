@@ -111,6 +111,14 @@ impl Publication {
     }
 }
 
+/// A verified chain head a member vault can keep: the key-ring revision and the
+/// digest of that exact ring. A later feed must extend this chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainPin {
+    pub ring_revision: u64,
+    pub head: [u8; 32],
+}
+
 /// Verified public material. Only Charter can construct it. This is not admission.
 pub struct VerifiedCharter {
     community: String,
@@ -118,6 +126,7 @@ pub struct VerifiedCharter {
     epoch: u64,
     deadline: u64,
     ring: csgn::KeyRing,
+    ring_revision: u64,
     manifest: Vec<u8>,
     publications: [Publication; 5],
     settings: crbk::Snapshot,
@@ -145,6 +154,13 @@ impl VerifiedCharter {
     }
     pub fn valid_until(&self) -> u64 {
         self.deadline
+    }
+    /// The chain head to pin after this verification.
+    pub fn chain_pin(&self) -> ChainPin {
+        ChainPin {
+            ring_revision: self.ring_revision,
+            head: self.ring.digest(),
+        }
     }
     pub fn key_ring(&self) -> &csgn::KeyRing {
         &self.ring
@@ -246,6 +262,8 @@ pub struct Charter {
     ring: Option<csgn::KeyRing>,
     /// Set when the chain root is a genesis fingerprint rather than a configured ring.
     fingerprint: Option<[u8; csgn::FINGERPRINT_LEN]>,
+    /// A previously verified head the walk from genesis must pass through.
+    pin: Option<ChainPin>,
     ring_revision: u64,
     minimum_revision: u64,
 }
@@ -272,6 +290,7 @@ impl Charter {
             high_water: 0,
             ring: Some(ring),
             fingerprint: None,
+            pin: None,
             ring_revision,
             minimum_revision,
         })
@@ -300,9 +319,22 @@ impl Charter {
             high_water: 0,
             ring: None,
             fingerprint: Some(fingerprint),
+            pin: None,
             ring_revision: 0,
             minimum_revision,
         })
+    }
+    /// Require every feed to extend a previously verified chain head: the ring at
+    /// the pinned revision must be exactly the pinned digest (a different one is a
+    /// fork) and the chain may not end below it (rollback). Only for a
+    /// fingerprint-anchored charter that has not bootstrapped, because the check
+    /// needs the walk from genesis.
+    pub fn with_pin(mut self, pin: ChainPin) -> Result<Self> {
+        if self.fingerprint.is_none() || self.ring.is_some() {
+            return Err(Error::Scope);
+        }
+        self.pin = Some(pin);
+        Ok(self)
     }
     /// Return the canonical origin bound at construction, without asserting trust.
     pub fn origin(&self) -> &str {
@@ -375,6 +407,10 @@ impl Charter {
         };
         let chained = self.fingerprint.is_some();
         let mut ring_revision = start_revision;
+        // With a pin, the ring at the pinned revision must be exactly the pinned one.
+        let mut pinned_ok = self
+            .pin
+            .is_none_or(|pin| pin.ring_revision == 0 && pin.head == ring.digest());
         for transition in &feed.key_transitions {
             // Older retained proofs are not authority and need not remain unexpired.
             if transition.revision <= start_revision {
@@ -402,6 +438,17 @@ impl Charter {
             }
             ring = verified.next().clone();
             ring_revision = verified.revision();
+            if let Some(pin) = self.pin.filter(|pin| pin.ring_revision == ring_revision) {
+                pinned_ok = ring.digest() == pin.head;
+            }
+        }
+        if let Some(pin) = self.pin {
+            if ring_revision < pin.ring_revision {
+                return Err(Error::Rollback);
+            }
+            if !pinned_ok {
+                return Err(Error::Equivocation);
+            }
         }
         if feed.key_ring != ring.to_cbor() {
             return Err(Error::Unauthenticated);
@@ -594,6 +641,7 @@ impl Charter {
             epoch: feed.policy_epoch,
             deadline,
             ring: ring.clone(),
+            ring_revision,
             manifest: feed.manifest,
             publications,
             settings,
