@@ -74,5 +74,6 @@ node --version
 python3 --version
 rustup run nightly rustc -vV
 rustup run nightly cargo llvm-cov --version
-"$CCID_BIN" cached --repo "$PWD" --check verify
-test -s ".ccid/results/verify.jsonl"
+# openssl-sys (via the cplc dev-dependency chain) links system OpenSSL; run the
+# check inside the pinned shell and keep the verified ccid directory first on PATH.
+nix-shell .ci/check-shell.nix --run 'export PATH="$(dirname "$CCID_BIN"):$PATH"; set -e; "$CCID_BIN" cached --repo "$PWD" --check verify; test -s ".ccid/results/verify.jsonl"'
