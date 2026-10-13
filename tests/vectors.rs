@@ -1942,3 +1942,89 @@ fn a_pinned_head_must_be_extended_exactly_and_never_rolled_back_or_forked() {
     // A pin only makes sense before bootstrap and on a fingerprint charter.
     assert!(new_charter(ORIGIN, "alpha").unwrap().with_pin(pin).is_err());
 }
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn ended_chains_come_only_from_the_signed_communities_snapshot() {
+    let mut s = signer();
+    let mut v = feed(&mut s, 10, 1);
+    let mut c = new_charter(ORIGIN, "alpha").unwrap();
+    assert!(c.install(&bytes(&v), NOW).unwrap().ended().is_empty());
+
+    let hex = "ab".repeat(32);
+    replace(
+        &mut s,
+        &mut v,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!({"communities":["alpha"],"ended":[
+            {"fingerprint":hex,"reason_class":"banned","ended_at":5},
+            {"fingerprint":"cd".repeat(32),"reason_class":"dissolved","ended_at":6}]});
+        },
+    );
+    let mut c = new_charter(ORIGIN, "alpha").unwrap();
+    let ended = c.install(&bytes(&v), NOW).unwrap().ended().to_vec();
+    assert_eq!(ended.len(), 2);
+    assert_eq!(ended[0].fingerprint, [0xab; 32]);
+    assert_eq!(ended[0].reason_class, cchr::EndReason::Banned);
+    assert_eq!(ended[1].ended_at, 6);
+
+    // Duplicates, bad fingerprints and oversized lists are refused.
+    for content in [
+        json!({"communities":[],"ended":[
+            {"fingerprint":hex,"reason_class":"banned","ended_at":1},
+            {"fingerprint":hex,"reason_class":"dissolved","ended_at":2}]}),
+        json!({"communities":[],"ended":[{"fingerprint":"AB","reason_class":"banned","ended_at":1}]}),
+    ] {
+        let mut bad = v.clone();
+        replace(
+            &mut s,
+            &mut bad,
+            "communities",
+            CoseKind::CommunitiesSnapshot,
+            |p| p["content"] = content,
+        );
+        assert!(
+            new_charter(ORIGIN, "alpha")
+                .unwrap()
+                .install(&bytes(&bad), NOW)
+                .is_err()
+        );
+    }
+    let many: Vec<Value> = (0..=cchr::MAX_ENDED as u32)
+        .map(|i| {
+            let mut f = [0u8; 32];
+            f[..4].copy_from_slice(&i.to_be_bytes());
+            let text: String = f.iter().map(|b| format!("{b:02x}")).collect();
+            json!({"fingerprint":text,"reason_class":"banned","ended_at":1})
+        })
+        .collect();
+    let mut big = v.clone();
+    replace(
+        &mut s,
+        &mut big,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!({"communities":[],"ended":many});
+        },
+    );
+    assert!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&big), NOW)
+            .is_err()
+    );
+
+    // Unsigned edits to the snapshot are refused: the entries are not outside the signature.
+    let mut forged = feed(&mut s, 10, 1);
+    forged["communities"] = v["communities"].clone();
+    forged["communities"][0] = json!(0);
+    assert!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&forged), NOW)
+            .is_err()
+    );
+}
