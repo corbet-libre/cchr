@@ -278,6 +278,7 @@ fn coherent_material_is_immutable_and_expiry_cannot_reverse() {
     assert_eq!(c.state(NOW), State::Unbootstrapped);
     let current = c.install(&bytes(&v), NOW).unwrap();
     assert_eq!(current.revision(), 10);
+    assert_eq!(current.fingerprint(), None);
     let settings = current.settings(NOW).unwrap();
     assert_eq!(settings.community, "alpha");
     assert_eq!(
@@ -1805,14 +1806,6 @@ fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
     assert_eq!(
         charter.current(NOW).unwrap().fingerprint(),
         Some(&fingerprint)
-    );
-    assert_eq!(
-        new_charter(ORIGIN, "alpha")
-            .unwrap()
-            .install(&bytes(&feed(&mut s, 10, 1)), NOW)
-            .unwrap()
-            .fingerprint(),
-        None
     );
     // Later feeds need no genesis and no repeated links.
     let mut later = feed(&mut s, 11, 1);
