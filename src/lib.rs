@@ -130,6 +130,7 @@ pub struct VerifiedCharter {
     deadline: u64,
     ring: csgn::KeyRing,
     ring_revision: u64,
+    fingerprint: Option<[u8; csgn::FINGERPRINT_LEN]>,
     manifest: Vec<u8>,
     publications: [Publication; 5],
     settings: crbk::Snapshot,
@@ -158,6 +159,11 @@ impl VerifiedCharter {
     }
     pub fn valid_until(&self) -> u64 {
         self.deadline
+    }
+    /// The founding-key fingerprint this feed was verified against; `None` for a
+    /// charter configured with a key ring instead of a fingerprint.
+    pub fn fingerprint(&self) -> Option<&[u8; csgn::FINGERPRINT_LEN]> {
+        self.fingerprint.as_ref()
     }
     /// The chain head to pin after this verification.
     pub fn chain_pin(&self) -> ChainPin {
@@ -657,6 +663,7 @@ impl Charter {
             deadline,
             ring: ring.clone(),
             ring_revision,
+            fingerprint: self.fingerprint,
             manifest: feed.manifest,
             publications,
             settings,

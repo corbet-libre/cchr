@@ -1802,6 +1802,18 @@ fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
         charter.current(NOW).unwrap().key_ring().to_cbor(),
         s.key_ring().to_cbor()
     );
+    assert_eq!(
+        charter.current(NOW).unwrap().fingerprint(),
+        Some(&fingerprint)
+    );
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&feed(&mut s, 10, 1)), NOW)
+            .unwrap()
+            .fingerprint(),
+        None
+    );
     // Later feeds need no genesis and no repeated links.
     let mut later = feed(&mut s, 11, 1);
     later["key_transitions"] = json!([second.clone()]);
