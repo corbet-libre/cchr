@@ -20,12 +20,17 @@ cbcn = { git = "https://git.corbet.ch/corbet-foss/cbcn", branch = "main" }
 cgrd = { git = "https://git.corbet.ch/corbet-foss/cgrd", branch = "main", default-features = false }
 csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false }
 cshm = { git = "https://git.corbet.ch/corbet-foss/cshm", branch = "main" }
+# Genesis lineage evidence by stamp: the Keys receipt and the wallet stamp presentation.
+ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "main" }
+cpsd = { git = "https://git.corbet.ch/corbet-foss/cpsd", branch = "main", default-features = false }
+blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 schemars = "1"
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 url = "2"
 
 [dev-dependencies]
+futures-executor = "0.3"
 ohttp = { version = "0.8", default-features = false, features = ["rust-hpke"] }
 coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }

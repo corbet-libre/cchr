@@ -1,5 +1,6 @@
 //! Charter verifies cvld's original public bytes. It never admits a member.
 #![forbid(unsafe_code)]
+pub mod genesis_stamp;
 mod json;
 mod passkeys;
 pub use passkeys::VerifiedPasskeyBinding;
@@ -8,6 +9,12 @@ mod wire;
 use serde_json::Value;
 use std::fmt;
 pub use wire::{EndReason, Ended, Revocations, SchemaVersion};
+pub use genesis_stamp::{
+    GenesisError, GenesisStampEvidence, LINEAGE_GENESIS_ACTION, MAX_GENESIS_EVIDENCE_BYTES,
+    StampKeyPeriod, StampTrust,
+    VerifiedGenesis, genesis_stamp_scope, lineage_genesis_action, lineage_genesis_action_for,
+    lineage_stamp_scope, verify_genesis, verify_genesis_parts,
+};
 
 /// Most end-of-chain entries one platform feed may carry.
 pub const MAX_ENDED: usize = 4096;
