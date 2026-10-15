@@ -1780,7 +1780,7 @@ fn signed_ohttp_directory_reaches_the_verified_charter_and_malformed_ones_do_not
 fn a_fingerprint_anchors_the_whole_chain_with_no_configured_key() {
     let mut s = signer();
     let genesis = s.genesis().unwrap();
-    let fingerprint = csgn::fingerprint(&genesis);
+    let fingerprint = csgn::verify_genesis(&genesis).unwrap().fingerprint();
     let link = |s: &mut Signer, seed: u8| {
         let proof = s
             .rotate_with_proof(SecretKey::from_seed(&mut [seed; 32]), NOW, NOW + 500)
@@ -1880,7 +1880,7 @@ fn old_chain(seeds: &[u8]) -> (Signer, Vec<u8>, Vec<Value>) {
 }
 fn old_feed(seeds: &[u8], with_genesis: bool) -> (Value, [u8; 32], Charter) {
     let (mut s, genesis, links) = old_chain(seeds);
-    let fingerprint = csgn::fingerprint(&genesis);
+    let fingerprint = csgn::verify_genesis(&genesis).unwrap().fingerprint();
     let mut v = feed(&mut s, 10, 1);
     if with_genesis {
         v["genesis"] = json!(genesis);
