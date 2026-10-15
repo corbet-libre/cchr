@@ -12,7 +12,8 @@ pub use wire::{EndReason, Ended, Revocations, SchemaVersion};
 pub use genesis_stamp::{
     GenesisError, GenesisStampEvidence, LINEAGE_GENESIS_ACTION, MAX_GENESIS_EVIDENCE_BYTES,
     StampKeyPeriod, StampTrust,
-    VerifiedGenesis, genesis_stamp_scope, lineage_genesis_action, lineage_genesis_action_for,
+    VerifiedGenesis, genesis_stamp_scope, global_stamp_trust, lineage_genesis_action,
+    lineage_genesis_action_for,
     lineage_stamp_scope, verify_genesis, verify_genesis_parts,
 };
 

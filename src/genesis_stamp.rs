@@ -395,3 +395,76 @@ fn genesis_stamp(
     }
     Ok(verified)
 }
+
+/// Issuer of the wallet's signed global status (`cgbl:<scope>`, scope `global`).
+const GLOBAL_STATUS_ISSUER: &str = "cgbl:global";
+
+/// The part of the wallet's signed global status (`cgbl::Status`, version 2) that names its
+/// stamp keys. Other fields are the wallet's and are ignored here.
+#[derive(serde::Deserialize)]
+struct GlobalStampStatus {
+    version: u32,
+    purpose: String,
+    scope: String,
+    #[serde(default)]
+    stamp_public_key: Option<Vec<u8>>,
+    #[serde(default)]
+    stamp_keys: Vec<GlobalStampKey>,
+}
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GlobalStampKey {
+    public_key: Vec<u8>,
+    valid_from: u64,
+    #[serde(default)]
+    valid_until: Option<u64>,
+}
+
+/// The wallet's stamp trust from its signed global status, for a device that verifies stamps
+/// (its own genesis evidence) without the server's anchors: `status` must verify under the
+/// global `key_ring` (csgn CBOR, issuer `cgbl:global`) at `now`. Every recorded key keeps its
+/// period; before rings were recorded the current key alone counts, valid from the start. The
+/// expiry cohort is the current (open) key's. A status without a stamp key, more than one open
+/// period, or an open period that is not the current key is refused.
+pub fn global_stamp_trust(
+    key_ring: &[u8],
+    status: &[u8],
+    now: u64,
+) -> Result<StampTrust, GenesisError> {
+    let ring = csgn::KeyRing::from_cbor(key_ring).map_err(|_| GenesisError::Invalid)?;
+    if ring.issuer() != GLOBAL_STATUS_ISSUER {
+        return Err(GenesisError::Stamp);
+    }
+    let verified = ring
+        .verify(status, csgn::Kind::SettingsSnapshot, now)
+        .map_err(|_| GenesisError::Stamp)?;
+    let status: GlobalStampStatus =
+        serde_json::from_slice(verified.payload()).map_err(|_| GenesisError::Invalid)?;
+    if status.version != 2 || status.purpose != "global-passport-status" || status.scope != "global"
+    {
+        return Err(GenesisError::Stamp);
+    }
+    let current = status.stamp_public_key.ok_or(GenesisError::Stamp)?;
+    let key = |bytes: &[u8]| StampPublicKey::from_bytes(bytes).map_err(|_| GenesisError::Stamp);
+    let params = key(&current)?.params();
+    let keys = if status.stamp_keys.is_empty() {
+        vec![StampKeyPeriod::new(key(&current)?, 0, None)?]
+    } else {
+        let mut open = status
+            .stamp_keys
+            .iter()
+            .filter(|period| period.valid_until.is_none());
+        if open.next().map(|period| &period.public_key) != Some(&current) || open.next().is_some()
+        {
+            return Err(GenesisError::Stamp);
+        }
+        status
+            .stamp_keys
+            .iter()
+            .map(|period| {
+                StampKeyPeriod::new(key(&period.public_key)?, period.valid_from, period.valid_until)
+            })
+            .collect::<Result<_, _>>()?
+    };
+    StampTrust::new(keys, params)
+}

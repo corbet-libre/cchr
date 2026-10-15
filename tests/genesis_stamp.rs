@@ -5,7 +5,8 @@
 #![cfg(not(target_arch = "wasm32"))]
 use cchr::{
     Charter, Configuration, GenesisError, GenesisStampEvidence, MAX_GENESIS_EVIDENCE_BYTES,
-    StampKeyPeriod, StampTrust, VerifiedCharter, genesis_stamp_scope, lineage_genesis_action,
+    StampKeyPeriod, StampTrust, VerifiedCharter, genesis_stamp_scope, global_stamp_trust,
+    lineage_genesis_action,
     lineage_genesis_action_for, lineage_stamp_scope, verify_genesis, verify_genesis_parts,
 };
 use ckmg::{Authority, Authorization, Binding, Commit, DeviceInfo, Error, Locator, Receipt};
@@ -421,4 +422,116 @@ fn trust_scope_and_wire_inputs_are_checked() {
         "genesis stamp evidence: Policy(Expired) Policy(Expired)"
     );
     assert!(std::error::Error::source(&error).is_none());
+}
+
+/// A `cgbl::Status` (version 2) of the global scope signed at NOW by the global key ring.
+fn global_status(
+    signer: &mut Signer,
+    current: Option<&StampIssuerKey>,
+    ring: &[(&StampIssuerKey, u64, Option<u64>)],
+    edit: impl FnOnce(&mut Value),
+) -> Vec<u8> {
+    let mut status = json!({"version":2,"purpose":"global-passport-status","scope":"global",
+        "epoch":EPOCH,"policy_revision":1,"shared_expiry":NOW / DAY * DAY + 30 * DAY,
+        "issuer_public_key":[1,2,3]});
+    if let Some(current) = current {
+        status["stamp_public_key"] = json!(current.public_key().to_bytes());
+    }
+    if !ring.is_empty() {
+        status["stamp_keys"] = ring
+            .iter()
+            .map(|(key, from, until)| {
+                let mut period =
+                    json!({"public_key":key.public_key().to_bytes(),"valid_from":from});
+                if let Some(until) = until {
+                    period["valid_until"] = json!(until);
+                }
+                period
+            })
+            .collect();
+    }
+    edit(&mut status);
+    sign(signer, Kind::SettingsSnapshot, status, NOW)
+}
+
+#[test]
+fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
+    let mut f = fixture();
+    let current = f.owner.current(NOW).unwrap();
+    let old = &f.key;
+    let new = key("stamp-2");
+    let mut global =
+        Signer::new("cgbl:global", SecretKey::from_seed(&mut [72; 32]), NOW - 1, 1000).unwrap();
+    let ring = global.key_ring().to_cbor();
+    // Evidence from the retired key, made inside its period, verifies under the ring.
+    let evidence = evidence(&mut f.holder, old, current, &f.receipt, NOW - 10, NOW - 10);
+    let rotated = [(old, NOW - DAY, Some(NOW - 5)), (&new, NOW - 5, None)];
+    let status = global_status(&mut global, Some(&new), &rotated, |_| {});
+    let trust = global_stamp_trust(&ring, &status, NOW).unwrap();
+    let verify = |trust: &StampTrust, evidence: &GenesisStampEvidence| {
+        verify_genesis_parts("alpha", current.fingerprint(), trust, evidence, &f.member, NOW)
+            .map(|verified| verified.stamp().digest().to_bytes())
+    };
+    assert!(verify(&trust, &evidence).is_ok());
+    // Before rings were recorded the current key alone counts, valid from the start.
+    let single = global_status(&mut global, Some(old), &[], |_| {});
+    assert!(verify(&global_stamp_trust(&ring, &single, NOW).unwrap(), &evidence).is_ok());
+    // A ring whose old key's period ended before the receipt time refuses that evidence.
+    let early = [(old, NOW - DAY, Some(NOW - 20)), (&new, NOW - 20, None)];
+    let status = global_status(&mut global, Some(&new), &early, |_| {});
+    assert_eq!(
+        verify(&global_stamp_trust(&ring, &status, NOW).unwrap(), &evidence),
+        Err(GenesisError::Stamp)
+    );
+
+    // Refused statuses: no stamp key, open period not the current key, two open periods,
+    // another purpose, version or scope.
+    let refused = |status: Vec<u8>| global_stamp_trust(&ring, &status, NOW).unwrap_err();
+    assert_eq!(refused(global_status(&mut global, None, &[], |_| {})), GenesisError::Stamp);
+    assert_eq!(
+        refused(global_status(&mut global, Some(old), &rotated, |_| {})),
+        GenesisError::Stamp
+    );
+    let two_open = [(old, NOW - DAY, None), (&new, NOW - 5, None)];
+    assert_eq!(
+        refused(global_status(&mut global, Some(&new), &two_open, |_| {})),
+        GenesisError::Stamp
+    );
+    for (field, value) in [
+        ("purpose", json!("global-passport-other")),
+        ("version", json!(1)),
+        ("scope", json!("alpha")),
+    ] {
+        let status = global_status(&mut global, Some(&new), &rotated, |status| {
+            status[field] = value
+        });
+        assert_eq!(refused(status), GenesisError::Stamp);
+    }
+    let inverted = [(old, NOW, Some(NOW - 5)), (&new, NOW - 5, None)];
+    assert_eq!(
+        refused(global_status(&mut global, Some(&new), &inverted, |_| {})),
+        GenesisError::Stamp
+    );
+
+    // Only the global ring's own signature, while it is valid, counts.
+    let status = global_status(&mut global, Some(&new), &rotated, |_| {});
+    assert_eq!(
+        global_stamp_trust(&ring, &status, NOW + 501).unwrap_err(),
+        GenesisError::Stamp
+    );
+    let mut tampered = status.clone();
+    let last = tampered.len() - 1;
+    tampered[last] ^= 1;
+    assert_eq!(refused(tampered), GenesisError::Stamp);
+    let mut community =
+        Signer::new("alpha", SecretKey::from_seed(&mut [72; 32]), NOW - 1, 1000).unwrap();
+    let foreign = global_status(&mut community, Some(&new), &rotated, |_| {});
+    assert_eq!(
+        global_stamp_trust(&community.key_ring().to_cbor(), &foreign, NOW).unwrap_err(),
+        GenesisError::Stamp
+    );
+    assert_eq!(
+        global_stamp_trust(b"not a ring", &status, NOW).unwrap_err(),
+        GenesisError::Invalid
+    );
 }
