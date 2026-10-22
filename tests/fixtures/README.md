@@ -18,3 +18,9 @@ Tests verify the original signature under its separately configured fixture ring
 and retain `balance-material.json` as the signed legacy-v1 refusal case. This
 capture has no common record epoch and grants no record or member authority.
 Routing-only synthetic tests remain separate from these captured owner bytes.
+
+`birth-genesis-v1.json` holds the known answers of wallet birth genesis evidence: a real ckmg
+`Created` receipt of `("wallet", account)` and a `BirthStatement` signed by the fictional test
+wallet key `SecretKey::from_seed([81; 32])` (csgn `Credential`, issuer `wallet`). It was written
+once by the ignored test `write_known_answer_fixture` in `tests/birth_genesis.rs`; the committed
+bytes are the answers and are never regenerated to make a test pass. Test secrets only.
