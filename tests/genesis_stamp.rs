@@ -163,7 +163,7 @@ fn stamp(
     let blind = key
         .issue_blind(&mut OsRng, &request, &nonce, EPOCH, now)
         .unwrap();
-    holder.finish_stamp(&blind, now).unwrap();
+    holder.finish_stamp(&blind, EPOCH, now).unwrap();
     let (scope, action) = &approvals[0];
     holder
         .present_stamp(&mut OsRng, scope, action, now)
@@ -387,6 +387,8 @@ fn trust_scope_and_wire_inputs_are_checked() {
         GenesisError::Stamp
     );
     let ring = StampTrust::new(vec![period], params()).unwrap();
+    // Assembled by hand, it names no epoch.
+    assert_eq!(ring.epoch(), None);
     assert!(format!("{:?}", ring.clone()).contains("stamp-1"));
 
     // The scope of an unfounded community is its id-tagged fingerprint; an invalid id refuses.
@@ -468,6 +470,9 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     let rotated = [(old, NOW - DAY, Some(NOW - 5)), (&new, NOW - 5, None)];
     let status = global_status(&mut global, Some(&new), &rotated, |_| {});
     let trust = global_stamp_trust(&ring, &status, NOW).unwrap();
+    // The trust carries the signed status's epoch, the one stamps are verified at: the
+    // epoch a device expects on the stamps it is issued, never one from the wallet's reply.
+    assert_eq!(trust.epoch(), Some(EPOCH));
     let verify = |trust: &StampTrust, evidence: &GenesisStampEvidence| {
         verify_genesis_parts("alpha", current.fingerprint(), trust, evidence, &f.member, NOW)
             .map(|verified| verified.stamp().digest().to_bytes())
@@ -476,6 +481,21 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     // Before rings were recorded the current key alone counts, valid from the start.
     let single = global_status(&mut global, Some(old), &[], |_| {});
     assert!(verify(&global_stamp_trust(&ring, &single, NOW).unwrap(), &evidence).is_ok());
+    let bumped = global_status(&mut global, Some(&new), &rotated, |status| {
+        status["epoch"] = json!(EPOCH + 7)
+    });
+    assert_eq!(
+        global_stamp_trust(&ring, &bumped, NOW).unwrap().epoch(),
+        Some(EPOCH + 7)
+    );
+    // A status without an epoch is not the wallet's status.
+    let no_epoch = global_status(&mut global, Some(&new), &rotated, |status| {
+        status.as_object_mut().unwrap().remove("epoch");
+    });
+    assert_eq!(
+        global_stamp_trust(&ring, &no_epoch, NOW).unwrap_err(),
+        GenesisError::Invalid
+    );
     // A ring whose old key's period ended before the receipt time refuses that evidence.
     let early = [(old, NOW - DAY, Some(NOW - 20)), (&new, NOW - 20, None)];
     let status = global_status(&mut global, Some(&new), &early, |_| {});

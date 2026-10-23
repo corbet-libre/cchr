@@ -102,6 +102,7 @@ impl std::fmt::Debug for StampKeyPeriod {
 pub struct StampTrust {
     keys: Vec<StampKeyPeriod>,
     params: StampParams,
+    epoch: Option<u64>,
 }
 impl StampTrust {
     /// Refuses an empty ring and duplicate key ids.
@@ -117,7 +118,20 @@ impl StampTrust {
                 return Err(GenesisError::Stamp);
             }
         }
-        Ok(Self { keys, params })
+        Ok(Self {
+            keys,
+            params,
+            epoch: None,
+        })
+    }
+
+    /// The stamp epoch of the signed global status this trust was read from
+    /// ([`global_stamp_trust`]): the epoch stamps are verified at, identical for
+    /// every member. `None` for a trust assembled by hand. A holder expects this
+    /// epoch on the stamps it is issued (`cpsd::OpaqueHolder::finish_stamp`),
+    /// never an epoch taken from the wallet's own reply.
+    pub fn epoch(&self) -> Option<u64> {
+        self.epoch
     }
 }
 
@@ -406,6 +420,7 @@ struct GlobalStampStatus {
     version: u32,
     purpose: String,
     scope: String,
+    epoch: u64,
     #[serde(default)]
     stamp_public_key: Option<Vec<u8>>,
     #[serde(default)]
@@ -466,5 +481,7 @@ pub fn global_stamp_trust(
             })
             .collect::<Result<_, _>>()?
     };
-    StampTrust::new(keys, params)
+    let mut trust = StampTrust::new(keys, params)?;
+    trust.epoch = Some(status.epoch);
+    Ok(trust)
 }
