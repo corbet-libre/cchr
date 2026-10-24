@@ -296,7 +296,8 @@ pub fn verify_genesis<'a>(
     expected_member: &str,
     now: u64,
 ) -> Result<VerifiedGenesis<'a>, GenesisError> {
-    let (lineage, author) = genesis_receipt(receipt, current.community(), expected_member, at, now)?;
+    let (lineage, author) =
+        genesis_receipt(receipt, current.community(), expected_member, at, now)?;
     current.settings(now).map_err(GenesisError::Policy)?;
     if current.revocations().member_revoked(expected_member) {
         return Err(GenesisError::Policy(crate::Error::Unauthenticated));
@@ -328,8 +329,13 @@ pub fn verify_genesis_parts<'a>(
     expected_member: &str,
     now: u64,
 ) -> Result<VerifiedGenesis<'a>, GenesisError> {
-    let (lineage, author) =
-        genesis_receipt(&evidence.receipt, community, expected_member, evidence.at, now)?;
+    let (lineage, author) = genesis_receipt(
+        &evidence.receipt,
+        community,
+        expected_member,
+        evidence.at,
+        now,
+    )?;
     let stamp = genesis_stamp(
         trust,
         &genesis_stamp_scope(community, fingerprint)?,
@@ -469,15 +475,18 @@ pub fn global_stamp_trust(
             .stamp_keys
             .iter()
             .filter(|period| period.valid_until.is_none());
-        if open.next().map(|period| &period.public_key) != Some(&current) || open.next().is_some()
-        {
+        if open.next().map(|period| &period.public_key) != Some(&current) || open.next().is_some() {
             return Err(GenesisError::Stamp);
         }
         status
             .stamp_keys
             .iter()
             .map(|period| {
-                StampKeyPeriod::new(key(&period.public_key)?, period.valid_from, period.valid_until)
+                StampKeyPeriod::new(
+                    key(&period.public_key)?,
+                    period.valid_from,
+                    period.valid_until,
+                )
             })
             .collect::<Result<_, _>>()?
     };

@@ -6,8 +6,8 @@
 use cchr::{
     Charter, Configuration, GenesisError, GenesisStampEvidence, MAX_GENESIS_EVIDENCE_BYTES,
     StampKeyPeriod, StampTrust, VerifiedCharter, genesis_stamp_scope, global_stamp_trust,
-    lineage_genesis_action,
-    lineage_genesis_action_for, lineage_stamp_scope, verify_genesis, verify_genesis_parts,
+    lineage_genesis_action, lineage_genesis_action_for, lineage_stamp_scope, verify_genesis,
+    verify_genesis_parts,
 };
 use ckmg::{Authority, Authorization, Binding, Commit, DeviceInfo, Error, Locator, Receipt};
 use cpsd::{
@@ -233,7 +233,10 @@ fn genesis_evidence_verifies_with_and_without_a_charter_at_the_receipt_time() {
     let bytes = evidence.to_bytes().unwrap();
     let server = GenesisStampEvidence::from_bytes(&bytes).unwrap();
     assert_eq!(server.presentation_bytes(), evidence.presentation_bytes());
-    assert_eq!(format!("{:?}", server.clone()), "GenesisStampEvidence([redacted])");
+    assert_eq!(
+        format!("{:?}", server.clone()),
+        "GenesisStampEvidence([redacted])"
+    );
     let bound = verify_genesis_parts(
         "alpha",
         current.fingerprint(),
@@ -247,7 +250,10 @@ fn genesis_evidence_verifies_with_and_without_a_charter_at_the_receipt_time() {
     assert_eq!(bound.author(), &author);
     let recorded = bound.into_stamp();
     assert_eq!(recorded.digest().to_bytes(), digest);
-    assert_eq!(recorded.action_kind().as_str(), cchr::LINEAGE_GENESIS_ACTION);
+    assert_eq!(
+        recorded.action_kind().as_str(),
+        cchr::LINEAGE_GENESIS_ACTION
+    );
 
     // Three days later the stamp (one-day cohort) has long expired; the lineage still counts.
     let later = NOW + 3 * DAY;
@@ -286,7 +292,10 @@ fn genesis_evidence_verifies_with_and_without_a_charter_at_the_receipt_time() {
     // Another member, and a verifier clock before the receipt time.
     let other = nym(&OpaqueHolder::from_seed(&mut [41; 32]), "alpha");
     assert_eq!(verify(current, &other, NOW), Err(GenesisError::Scope));
-    assert_eq!(verify(current, &f.member, NOW - 1), Err(GenesisError::Clock));
+    assert_eq!(
+        verify(current, &f.member, NOW - 1),
+        Err(GenesisError::Clock)
+    );
 
     // A pre-activation device derives the same action from the receipt's challenge digest.
     assert!(
@@ -327,7 +336,10 @@ fn the_server_refuses_other_scopes_keys_times_and_stamps() {
         );
     }
     // A retired key still verifies evidence made inside its period.
-    let retired = trust(&[(&f.key, NOW - DAY, Some(NOW + 1)), (&key("stamp-2"), NOW + 1, None)]);
+    let retired = trust(&[
+        (&f.key, NOW - DAY, Some(NOW + 1)),
+        (&key("stamp-2"), NOW + 1, None),
+    ]);
     assert_eq!(check(&retired, "alpha", fingerprint, &f.member), Ok(1));
     assert_eq!(format!("{retired:?}").matches("StampKeyPeriod").count(), 2);
 
@@ -335,8 +347,15 @@ fn the_server_refuses_other_scopes_keys_times_and_stamps() {
     let old = NOW - 3 * DAY;
     let stale = self::evidence(&mut f.holder, &f.key, current, &f.receipt, old, NOW);
     assert_eq!(
-        verify_genesis_parts("alpha", fingerprint.as_ref(), &stamps, &stale, &f.member, NOW)
-            .unwrap_err(),
+        verify_genesis_parts(
+            "alpha",
+            fingerprint.as_ref(),
+            &stamps,
+            &stale,
+            &f.member,
+            NOW
+        )
+        .unwrap_err(),
         GenesisError::Stamp
     );
 
@@ -344,8 +363,15 @@ fn the_server_refuses_other_scopes_keys_times_and_stamps() {
     let mut thief = OpaqueHolder::from_seed(&mut [42; 32]);
     let stolen = self::evidence(&mut thief, &f.key, current, &f.receipt, NOW, NOW);
     assert_eq!(
-        verify_genesis_parts("alpha", fingerprint.as_ref(), &stamps, &stolen, &f.member, NOW)
-            .unwrap_err(),
+        verify_genesis_parts(
+            "alpha",
+            fingerprint.as_ref(),
+            &stamps,
+            &stolen,
+            &f.member,
+            NOW
+        )
+        .unwrap_err(),
         GenesisError::Scope
     );
 
@@ -355,8 +381,15 @@ fn the_server_refuses_other_scopes_keys_times_and_stamps() {
     let shown = evidence.presentation().unwrap();
     let forged = GenesisStampEvidence::new(unattested, &shown, SALT, NOW);
     assert_eq!(
-        verify_genesis_parts("alpha", fingerprint.as_ref(), &stamps, &forged, &f.member, NOW)
-            .unwrap_err(),
+        verify_genesis_parts(
+            "alpha",
+            fingerprint.as_ref(),
+            &stamps,
+            &forged,
+            &f.member,
+            NOW
+        )
+        .unwrap_err(),
         GenesisError::Receipt
     );
     // Malformed presentation bytes refuse as a stamp failure.
@@ -364,8 +397,15 @@ fn the_server_refuses_other_scopes_keys_times_and_stamps() {
     wire["presentation"] = json!([1, 2, 3]);
     let broken = GenesisStampEvidence::from_bytes(&serde_json::to_vec(&wire).unwrap()).unwrap();
     assert_eq!(
-        verify_genesis_parts("alpha", fingerprint.as_ref(), &stamps, &broken, &f.member, NOW)
-            .unwrap_err(),
+        verify_genesis_parts(
+            "alpha",
+            fingerprint.as_ref(),
+            &stamps,
+            &broken,
+            &f.member,
+            NOW
+        )
+        .unwrap_err(),
         GenesisError::Stamp
     );
 }
@@ -397,7 +437,10 @@ fn trust_scope_and_wire_inputs_are_checked() {
         unfounded.fingerprint().to_bytes(),
         csgn::community_fingerprint("alpha", None)
     );
-    assert_eq!(genesis_stamp_scope("", None).unwrap_err(), GenesisError::Scope);
+    assert_eq!(
+        genesis_stamp_scope("", None).unwrap_err(),
+        GenesisError::Scope
+    );
 
     // Wire: oversized, malformed and foreign-purpose bytes are refused.
     assert_eq!(
@@ -462,8 +505,13 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     let current = f.owner.current(NOW).unwrap();
     let old = &f.key;
     let new = key("stamp-2");
-    let mut global =
-        Signer::new("cgbl:global", SecretKey::from_seed(&mut [72; 32]), NOW - 1, 1000).unwrap();
+    let mut global = Signer::new(
+        "cgbl:global",
+        SecretKey::from_seed(&mut [72; 32]),
+        NOW - 1,
+        1000,
+    )
+    .unwrap();
     let ring = global.key_ring().to_cbor();
     // Evidence from the retired key, made inside its period, verifies under the ring.
     let evidence = evidence(&mut f.holder, old, current, &f.receipt, NOW - 10, NOW - 10);
@@ -474,8 +522,15 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     // epoch a device expects on the stamps it is issued, never one from the wallet's reply.
     assert_eq!(trust.epoch(), Some(EPOCH));
     let verify = |trust: &StampTrust, evidence: &GenesisStampEvidence| {
-        verify_genesis_parts("alpha", current.fingerprint(), trust, evidence, &f.member, NOW)
-            .map(|verified| verified.stamp().digest().to_bytes())
+        verify_genesis_parts(
+            "alpha",
+            current.fingerprint(),
+            trust,
+            evidence,
+            &f.member,
+            NOW,
+        )
+        .map(|verified| verified.stamp().digest().to_bytes())
     };
     assert!(verify(&trust, &evidence).is_ok());
     // Before rings were recorded the current key alone counts, valid from the start.
@@ -507,7 +562,10 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     // Refused statuses: no stamp key, open period not the current key, two open periods,
     // another purpose, version or scope.
     let refused = |status: Vec<u8>| global_stamp_trust(&ring, &status, NOW).unwrap_err();
-    assert_eq!(refused(global_status(&mut global, None, &[], |_| {})), GenesisError::Stamp);
+    assert_eq!(
+        refused(global_status(&mut global, None, &[], |_| {})),
+        GenesisError::Stamp
+    );
     assert_eq!(
         refused(global_status(&mut global, Some(old), &rotated, |_| {})),
         GenesisError::Stamp
