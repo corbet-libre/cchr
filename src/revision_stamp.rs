@@ -2,9 +2,7 @@
 use crate::VerifiedCharter;
 use crate::genesis_stamp::{GenesisError, StampTrust, lineage_stamp_scope};
 use ckmg::{Change, Lineage, PairingApproval, PublicKey, Receipt};
-use cpsd::{
-    ActionKind, PayloadDigest, StampAction, StampPresentation, StampSalt, VerifiedStamp,
-};
+use cpsd::{ActionKind, PayloadDigest, StampAction, StampPresentation, StampSalt, VerifiedStamp};
 
 /// Stamp action kind of the ONE pairing slot per community.
 pub const PAIR_ACTION: &str = "device_pair";
@@ -145,8 +143,7 @@ pub fn verify_revision<'a>(
         session,
         Some(&challenge),
     );
-    let approval =
-        PairingApproval::new(community, &digest).map_err(|_| RevisionError::Scope)?;
+    let approval = PairingApproval::new(community, &digest).map_err(|_| RevisionError::Scope)?;
     ckmg::verify_ed25519(host.value(), &approval.message(), host_signature)
         .map_err(|_| RevisionError::Host)?;
     let action = StampAction::new(
