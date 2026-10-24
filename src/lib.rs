@@ -2,6 +2,8 @@
 #![forbid(unsafe_code)]
 pub mod birth;
 pub mod genesis_stamp;
+pub mod revision_stamp;
+pub use revision_stamp::{PAIR_ACTION, RevisionError, VerifiedRevision, pair_payload, verify_revision};
 mod json;
 mod passkeys;
 pub use passkeys::VerifiedPasskeyBinding;

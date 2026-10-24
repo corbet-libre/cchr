@@ -105,6 +105,38 @@ pub struct StampTrust {
     epoch: Option<u64>,
 }
 impl StampTrust {
+    /// `presentation` as the stamp of `action` in `scope` under `expected_member`'s pseudonym,
+    /// signed by a key valid at `at`, judged at `at`. The revealed epoch is the one the key
+    /// signed; the live epoch check belongs to the community at acceptance.
+    pub(crate) fn verify_action(
+        &self,
+        scope: &StampScope,
+        action: &StampAction,
+        presentation: &StampPresentation,
+        at: u64,
+        expected_member: &str,
+    ) -> Result<VerifiedStamp, GenesisError> {
+        let key = self
+            .keys
+            .iter()
+            .find(|period| period.key.key_id() == presentation.key_id())
+            .filter(|period| period.covers(at))
+            .ok_or(GenesisError::Stamp)?;
+        let verified = verify_stamp(
+            std::slice::from_ref(&key.key),
+            &self.params,
+            scope,
+            presentation.epoch(),
+            action,
+            presentation,
+            at,
+        )
+        .map_err(|_| GenesisError::Stamp)?;
+        if verified.pseudonym().to_hex() != expected_member {
+            return Err(GenesisError::Scope);
+        }
+        Ok(verified)
+    }
     /// Refuses an empty ring and duplicate key ids.
     pub fn new(keys: Vec<StampKeyPeriod>, params: StampParams) -> Result<Self, GenesisError> {
         if keys.is_empty() {
@@ -391,29 +423,8 @@ fn genesis_stamp(
     at: u64,
     expected_member: &str,
 ) -> Result<VerifiedStamp, GenesisError> {
-    let key = trust
-        .keys
-        .iter()
-        .find(|period| period.key.key_id() == presentation.key_id())
-        .filter(|period| period.covers(at))
-        .ok_or(GenesisError::Stamp)?;
     let action = lineage_genesis_action(receipt, salt, at)?;
-    // The revealed epoch is the one the key signed; the live epoch check belongs to the
-    // community at acceptance.
-    let verified = verify_stamp(
-        std::slice::from_ref(&key.key),
-        &trust.params,
-        scope,
-        presentation.epoch(),
-        &action,
-        presentation,
-        at,
-    )
-    .map_err(|_| GenesisError::Stamp)?;
-    if verified.pseudonym().to_hex() != expected_member {
-        return Err(GenesisError::Scope);
-    }
-    Ok(verified)
+    trust.verify_action(scope, &action, presentation, at, expected_member)
 }
 
 /// Issuer of the wallet's signed global status (`cgbl:<scope>`, scope `global`).
