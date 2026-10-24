@@ -16,7 +16,7 @@ Write code, comments and documentation in English.
 
 - Run formatting, strict Clippy, tests and wasm32 checks in GitHub Actions.
 - Execute shared vectors on wasm; compile-only is insufficient.
-- Do not run Cargo on the workstation. Never deploy or publish registries.
+- Do not run Cargo locally. Never deploy or publish registries.
 - Use first-party Git dependencies on branch main, one full locked revision per crate.
 - Commit explicit paths, plain English imperative messages, no AI attribution.
 - Pull with rebase before every push; never force-push.
