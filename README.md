@@ -24,7 +24,9 @@ verification and commits the new ring/floors only with a fully valid feed.
 No storage, network, wall-clock access, signing keys or background tasks exist.
 
 Charter supplies `admission_policy(action, now, maximum_snapshot_age)` to Guard's
-`check_published`. The adapter retains original signed settings and separate
+`check_published`; product readers call `current_admission_policy(action, now)`, which fixes the age at
+the code constant `MAXIMUM_SNAPSHOT_AGE` (two UTC days: issue times are day-rounded and signed validity is
+at least two days, so a smaller limit rejects healthy snapshots). The adapter retains original signed settings and separate
 revocations. Guard returns admission only after the actual credential, device,
 profile, pins and complete Rulebook policy pass. Charter alone grants no
 admission. No replacement snapshot is signed or synthesized.

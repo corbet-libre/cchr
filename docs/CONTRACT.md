@@ -98,7 +98,9 @@ WebAuthn/BBS flows. All/any/k-of-n policy edits, schema publication and last-pas
 revocation use the HTTP registry, and ordinary registration/lobby traffic must
 leave trust bytes unchanged. Identical captured bytes execute natively and in wasm.
 
-`admission_policy(action, now, maximum_snapshot_age)` borrows the original signed
+`current_admission_policy(action, now)` is `admission_policy` with the one product limit
+`MAXIMUM_SNAPSHOT_AGE` = 2 UTC days (code constant, never configuration; staleness is bounded by the signed
+validity). `admission_policy(action, now, maximum_snapshot_age)` borrows the original signed
 settings and separate revocations for `cgrd::check_published`. It refuses expired
 Charters and transfers authenticated revision/epoch floors without serializing
 replacement settings. The schema bytes come from `publication(Kind::Schema)`.

@@ -1,6 +1,13 @@
 //! Charter verifies cvld's original public bytes. It never admits a member.
 #![forbid(unsafe_code)]
 pub mod birth;
+
+/// The oldest signed snapshot a product reader accepts, in seconds (two UTC days).
+///
+/// Issue times are day-rounded and signed validity is at least 2 days, so a smaller limit rejects
+/// healthy snapshots; staleness is bounded by the signed validity. This is a code constant, never a
+/// deployment or operator setting.
+pub const MAXIMUM_SNAPSHOT_AGE: u64 = 2 * 86_400;
 pub mod genesis_stamp;
 pub mod revision_stamp;
 pub use revision_stamp::{
@@ -234,6 +241,16 @@ impl VerifiedCharter {
     pub fn root_board(&self) -> Option<&cbcn::root_board::RootBoard> {
         self.root_board.as_ref()
     }
+    /// [`Self::admission_policy`] with the product's one snapshot age limit,
+    /// [`MAXIMUM_SNAPSHOT_AGE`]. Every product reader uses this; no age is configured.
+    pub fn current_admission_policy<'a>(
+        &'a self,
+        action: &'a str,
+        now: u64,
+    ) -> Result<cgrd::PublishedPolicy<'a>> {
+        self.admission_policy(action, now, MAXIMUM_SNAPSHOT_AGE)
+    }
+
     /// Borrow original authenticated publications for Guard. This is not an
     /// admission: Guard still requires a valid credential, device binding,
     /// issuer admission decision, profile and pin evidence. The action is trusted
