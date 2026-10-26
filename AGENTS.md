@@ -1,22 +1,40 @@
-# Agent instructions
+# cchr agent notes
 
-Write code, comments and documentation in English.
+Work in a lane (`~/agents/scratch/lane-new <lane>`); never edit `~/agents/scratch/ws`.
+Run commands from the lane root (`<lane>/ws`); `<lane>` below is your lane name.
 
-## Product boundary
+Build and test (quote the verdict line, never infer from a pipe):
+- `~/agents/scratch/cbuild <lane> test -p cchr` — native suite, green
+  (vectors `32`, birth_genesis `7` + `1` ignored, root_board `5`,
+  genesis_stamp `4`, lib `4`, snapshot_age `1`, revision_stamp `1`;
+  `door` needs the `door-vectors` feature), exit 0
+- `~/agents/scratch/cbuild <lane> fmt -p cchr -- --check` — must be clean
+- Full gate (strict clippy `--locked`, wasm32 check, wasm vectors,
+  real-door fixtures, nightly 100% coverage) runs in CI only:
+  `.ci/verify.sh`.
 
-- Charter: verify coherent community publications; never decide admission.
-- Read docs/CONTRACT.md before changing the public boundary.
-- Survey maintained libraries first; record candidates and reasons in README.md.
-- Reuse csgn verification and cshm schema semantics. No cryptographic primitives.
-- No member queries, activity logs, identifiers in diagnostics, private keys or SQL storage.
-- Inject time and I/O; invalid trust never becomes authority.
-- Licence: LGPL-3.0-only WITH LGPL-3.0-linking-exception.
+Land: `cargo fmt` in touched repos, rebase on main (never force-push),
+`cbuild <lane> xtask land --dry`, then `xtask land`.
 
-## Quality boundary
+Invariants (rule -> enforcing test in `tests/vectors.rs` unless noted):
+- Verify-only: charter never admits; admission is the Guard's job
+  -> `coherent_material_is_immutable_and_expiry_cannot_reverse` (empty `Bundle` not admitted)
+- Atomic commit: failed installs keep the old set
+  -> `invalid_candidates_never_partially_replace_the_installed_set`
+- Equal revision with different bytes is equivocation and refused
+  -> `same_revision_requires_exact_original_signed_bytes`
+- Injected clock only moves forward; regression is refused
+  -> `coherent_material_is_immutable_and_expiry_cannot_reverse` (`ClockRegression`)
+- `MAXIMUM_SNAPSHOT_AGE` is a code constant: two issuer days
+  -> `tests/snapshot_age.rs::the_product_snapshot_age_limit_is_two_issuer_days`
+- Pure leaf: no storage, network, wall clock or signing keys
+  -> `src/lib.rs:2` (`forbid(unsafe_code)`); installs take only `&[u8]` + `now`
+- Duplicate object keys refused at every depth
+  -> `duplicate_fields_unknown_fields_trailing_bytes_and_limits_fail`
+- Roots come from deployment config; rings rotate only by signed transition
+  -> `configured_root_and_signed_rotation_are_explicit`
 
-- Run formatting, strict Clippy, tests and wasm32 checks in GitHub Actions.
-- Execute shared vectors on wasm; compile-only is insufficient.
-- Do not run Cargo locally. Never deploy or publish registries.
-- Use first-party Git dependencies on branch main, one full locked revision per crate.
-- Commit explicit paths, plain English imperative messages, no AI attribution.
-- Pull with rebase before every push; never force-push.
+Pointers: `src/lib.rs`, `src/wire.rs`, `docs/CONTRACT.md`,
+`docs/COVERAGE.md`, `.ci/verify.sh`.
+Commits: explicit paths, imperative, author per `~/agents/AGENT.md`; no AI trailers.
+`publish=false`; LGPL-3.0-only WITH linking exception; never publish to a registry.
