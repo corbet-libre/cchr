@@ -345,14 +345,24 @@ test!(binding_member_returns_the_exact_pseudonym, {
 });
 
 test!(binding_policy_epoch_returns_the_charter_epoch, {
+    // Epoch 2 (not 0 or 1) so both constant mutants fail.
     let mut s = signer();
-    let mut charter = install_clean(&mut s);
-    let signed = valid_binding(&mut s, "alice", &[8u8; 32], NOW + 400);
+    let v = feed_with(&mut s, 10, 2, clean_revocations());
+    let mut charter = Charter::new(configuration(&s)).unwrap();
+    charter
+        .install(&serde_json::to_vec(&v).unwrap(), NOW)
+        .unwrap();
+    let signed = binding_signed(
+        &mut s,
+        binding_body("alice", 2, credential_descriptor(&[8u8; 32])),
+        NOW + 400,
+    );
     let view = charter.current(NOW).unwrap();
     let binding = view.passkey_binding(&signed, "alice", NOW).unwrap();
-    assert_eq!(view.policy_epoch(), 1);
-    assert_eq!(binding.policy_epoch(), 1);
+    assert_eq!(view.policy_epoch(), 2);
+    assert_eq!(binding.policy_epoch(), 2);
     assert_ne!(binding.policy_epoch(), 0);
+    assert_ne!(binding.policy_epoch(), 1);
 });
 
 test!(binding_valid_until_is_the_retained_deadline, {
