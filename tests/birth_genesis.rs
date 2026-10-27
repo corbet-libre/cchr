@@ -252,7 +252,10 @@ fn evidence_wire_and_expected_values_are_checked() {
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
     use super::*;
-    use ckmg::{Authority, Authorization, Binding, Commit, DeviceInfo, Error, Locator, Receipt};
+    use ckmg::{
+        Authority, Authorization, Binding, Change, Commit, DeviceInfo, Error, Locator, Receipt,
+        RestoreRoot,
+    };
     use csgn::{Kind, SecretKey, Signer};
     use serde_json::json;
     use std::{cell::RefCell, collections::HashMap, rc::Rc};
@@ -555,6 +558,49 @@ mod native {
     }
 
     #[test]
+    fn a_restored_genesis_is_not_the_birth_genesis() {
+        // A genuine restored lineage: attested, epoch 1, revision 1, but not Created.
+        let prf = ckmg::passkey::PrfOutput::from_bytes(&PRF).unwrap();
+        let mut keys = ckmg::Keys::new(Memory::default(), Clock, ckmg::SystemEntropy, Allow);
+        let created = futures_executor::block_on(keys.create_scope(
+            &prf,
+            Binding::new("wallet", ACCOUNT).unwrap(),
+            DeviceInfo::new("fixture", &[9; 16]).unwrap(),
+            b"fixture",
+        ))
+        .unwrap();
+        futures_executor::block_on(keys.acknowledge(created.operation)).unwrap();
+        let sealed = futures_executor::block_on(keys.retained_checkpoint()).unwrap();
+        let anchor = created.attested_lineage().unwrap().0.clone();
+        assert_eq!((anchor.epoch, anchor.revision), (1, 1));
+        let mut restored_keys =
+            ckmg::Keys::new(Memory::default(), Clock, ckmg::SystemEntropy, Allow);
+        let restored = futures_executor::block_on(restored_keys.restore_scope(
+            &prf,
+            &anchor,
+            RestoreRoot::Checkpoint(&sealed),
+            DeviceInfo::new("fixture", &[9; 16]).unwrap(),
+            b"fixture",
+        ))
+        .unwrap();
+        assert!(matches!(restored.change, Change::Restored(_)));
+        // The restored receipt is genuinely attested at epoch 1, revision 1: only
+        // the Created shape check refuses it, which is what the mutants drop.
+        let (restored_lineage, _) = restored.attested_lineage().unwrap();
+        assert_eq!((restored_lineage.epoch, restored_lineage.revision), (1, 1));
+        // The wallet's statement still names the created receipt, so the restored
+        // lineage is refused as Receipt before any device or digest comparison.
+        let mut signer = wallet_signer();
+        let ring = signer.key_ring().clone();
+        let payload = serde_json::to_vec(&statement_value(&created)).unwrap();
+        let signed = sign_at(&mut signer, &payload, ISSUED);
+        assert_eq!(
+            check(&ring, &evidence(&restored, signed, AT)).unwrap_err(),
+            BirthError::Receipt
+        );
+    }
+
+    #[test]
     fn unknown_expired_and_retired_keys() {
         let receipt = first_lineage(PRF, "wallet", ACCOUNT);
         let mut signer = wallet_signer();
@@ -652,4 +698,79 @@ mod native {
             BirthError::Statement
         );
     }
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn diagnostics_render_without_payloads() {
+    for (error, name) in [
+        (BirthError::Statement, "Statement"),
+        (BirthError::Receipt, "Receipt"),
+        (BirthError::Scope, "Scope"),
+        (BirthError::Device, "Device"),
+        (BirthError::Digest, "Digest"),
+        (BirthError::Clock, "Clock"),
+        (BirthError::Restore, "Restore"),
+        (BirthError::Invalid, "Invalid"),
+        (BirthError::Limit, "Limit"),
+    ] {
+        assert_eq!(error.to_string(), format!("birth genesis evidence: {name}"));
+    }
+    let statement = BirthStatement::new(
+        [7; 32],
+        "account",
+        &[1],
+        [2; 32],
+        [3; 32],
+        [4; 32],
+        [5; 32],
+        6,
+    )
+    .unwrap();
+    assert_eq!(format!("{statement:?}"), "BirthStatement([redacted])");
+    let v = vector();
+    let evidence = BirthGenesisEvidence::from_bytes(&v.evidence).unwrap();
+    assert_eq!(format!("{evidence:?}"), "BirthGenesisEvidence([redacted])");
+    let wallet = unhex32(v.str("wallet"));
+    let verified =
+        verify_birth_genesis(&v.ring, &evidence, &wallet, v.str("account"), v.u64("now")).unwrap();
+    assert_eq!(format!("{verified:?}"), "VerifiedBirth([redacted])");
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn statement_shape_bounds_are_exact() {
+    // The longest identifiers are accepted; one byte more is refused (covered elsewhere).
+    BirthStatement::new(
+        [7; 32],
+        &"a".repeat(cchr::birth::MAX_ACCOUNT_BYTES),
+        &[1],
+        [1; 32],
+        [1; 32],
+        [1; 32],
+        [1; 32],
+        1,
+    )
+    .unwrap();
+    BirthStatement::new(
+        [7; 32],
+        "a",
+        &vec![1; cchr::birth::MAX_CREDENTIAL_ID_BYTES],
+        [1; 32],
+        [1; 32],
+        [1; 32],
+        [1; 32],
+        1,
+    )
+    .unwrap();
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn evidence_size_boundary_is_exact() {
+    // Exactly the limit still decodes (and fails as invalid, not as over-limit).
+    assert_eq!(
+        BirthGenesisEvidence::from_bytes(&vec![b' '; MAX_BIRTH_EVIDENCE_BYTES]).unwrap_err(),
+        BirthError::Invalid
+    );
 }

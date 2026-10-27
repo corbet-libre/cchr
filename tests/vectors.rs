@@ -1,5 +1,5 @@
 use cblv::keys::KeySource;
-use cchr::{Changes, Charter, Configuration, Error, Kind, State};
+use cchr::{ChainPin, Changes, Charter, Configuration, Error, Kind, State};
 use csgn::{Kind as CoseKind, SecretKey, Signer};
 use serde_json::{Value, json};
 
@@ -2031,5 +2031,314 @@ fn ended_chains_come_only_from_the_signed_communities_snapshot() {
             .unwrap()
             .install(&bytes(&forged), NOW)
             .is_err()
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn feed_size_boundary_is_exact() {
+    assert_eq!(cchr::MAX_FEED_BYTES, 32 * 1024 * 1024);
+    // Exactly the limit still decodes (and fails as malformed, not as over-limit).
+    let exact = vec![b' '; cchr::MAX_FEED_BYTES];
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&exact, NOW)
+            .unwrap_err(),
+        Error::Malformed
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn publication_cose_size_boundary_is_exact() {
+    // Exactly the limit passes the size gate and fails signature verification.
+    let mut exact = feed(&mut signer(), 10, 1);
+    exact["settings"] = json!(vec![0u8; (1 << 20) + 8192]);
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&exact), NOW)
+            .unwrap_err(),
+        Error::Signature
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn fingerprint_scope_bounds_are_exact() {
+    // The longest community name is accepted; one byte more is refused.
+    Charter::from_fingerprint(ORIGIN.into(), "x".repeat(csgn::MAX_ISSUER_LEN), [7; 32], 1).unwrap();
+    for community in [
+        String::new(),
+        "x".repeat(csgn::MAX_ISSUER_LEN + 1),
+        "a\0b".into(),
+    ] {
+        assert!(matches!(
+            Charter::from_fingerprint(ORIGIN.into(), community, [7; 32], 1),
+            Err(Error::Scope)
+        ));
+    }
+    // A zero floor revision is refused even for a well-formed community.
+    assert!(matches!(
+        Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), [7; 32], 0),
+        Err(Error::Scope)
+    ));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn with_pin_after_bootstrap_is_refused() {
+    let mut s = signer();
+    let genesis = s.genesis().unwrap();
+    let fingerprint = csgn::verify_genesis(&genesis).unwrap().fingerprint();
+    let mut v = feed(&mut s, 10, 1);
+    v["genesis"] = json!(genesis);
+    let mut charter =
+        Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1).unwrap();
+    charter.install(&bytes(&v), NOW).unwrap();
+    // The ring is installed now, so pinning is no longer allowed.
+    let pin = charter.current(NOW).unwrap().chain_pin();
+    assert!(matches!(charter.with_pin(pin), Err(Error::Scope)));
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn key_transition_count_boundary_is_exact() {
+    // Exactly the limit is skipped entry by entry (all retained) and installs.
+    let mut s = signer();
+    let mut v = feed(&mut s, 10, 1);
+    v["key_transitions"] = json!(vec![json!({"revision": 0, "proof": []}); 256]);
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    assert_eq!(charter.install(&bytes(&v), NOW).unwrap().revision(), 10);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_pin_on_the_genesis_ring_must_match_it_exactly() {
+    let mut s = signer();
+    let genesis = s.genesis().unwrap();
+    let fingerprint = csgn::verify_genesis(&genesis).unwrap().fingerprint();
+    let mut v = feed(&mut s, 10, 1);
+    v["genesis"] = json!(genesis);
+    // A pin on the genesis ring itself is extended by any chain ...
+    let head =
+        csgn::verify_genesis(&serde_json::from_value::<Vec<u8>>(v["genesis"].clone()).unwrap())
+            .unwrap()
+            .ring()
+            .digest();
+    Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+        .unwrap()
+        .with_pin(ChainPin {
+            ring_revision: 0,
+            head,
+        })
+        .unwrap()
+        .install(&bytes(&v), NOW)
+        .unwrap();
+    // ... but a pin naming another digest at revision zero is a fork.
+    let mut forked = Charter::from_fingerprint(ORIGIN.into(), "alpha".into(), fingerprint, 1)
+        .unwrap()
+        .with_pin(ChainPin {
+            ring_revision: 0,
+            head: [9; 32],
+        })
+        .unwrap();
+    assert_eq!(
+        forked.install(&bytes(&v), NOW).unwrap_err(),
+        Error::Equivocation
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn feed_revision_and_epoch_at_i64_max_install() {
+    // The i64 bound is exclusive: exactly i64::MAX installs, one more is refused.
+    let mut s = signer();
+    let top = feed(&mut s, i64::MAX as u64, 1);
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&top), NOW)
+            .unwrap()
+            .revision(),
+        i64::MAX as u64
+    );
+    let mut s = signer();
+    let top_epoch = feed(&mut s, 10, i64::MAX as u64);
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&top_epoch), NOW)
+            .unwrap()
+            .policy_epoch(),
+        i64::MAX as u64
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn balance_and_board_revision_above_feed_are_incoherent() {
+    // A balance revision past the feed revision is incoherent, not verified.
+    let mut s = signer();
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&with_balance(&mut s, 11, 12)), NOW)
+            .unwrap_err(),
+        Error::Incoherent
+    );
+    // Same for the root board.
+    let mut s = signer();
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&with_root_board(&mut s, 11, 12)), NOW)
+            .unwrap_err(),
+        Error::Incoherent
+    );
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn community_and_ended_bounds_are_exact() {
+    // Exactly 256 communities install; the 257th is refused (covered elsewhere).
+    let mut s = signer();
+    let mut full = feed(&mut s, 10, 1);
+    replace(
+        &mut s,
+        &mut full,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!((0..256).map(|n| format!("c{n}")).collect::<Vec<_>>());
+        },
+    );
+    new_charter(ORIGIN, "alpha")
+        .unwrap()
+        .install(&bytes(&full), NOW)
+        .unwrap();
+    // A 256-byte community name installs.
+    let mut s = signer();
+    let mut long = feed(&mut s, 10, 1);
+    replace(
+        &mut s,
+        &mut long,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!(["x".repeat(256)]);
+        },
+    );
+    new_charter(ORIGIN, "alpha")
+        .unwrap()
+        .install(&bytes(&long), NOW)
+        .unwrap();
+    // Exactly MAX_ENDED ended chains install.
+    let mut s = signer();
+    let mut big = feed(&mut s, 10, 1);
+    let many: Vec<Value> = (0..cchr::MAX_ENDED as u32)
+        .map(|i| {
+            let mut f = [0u8; 32];
+            f[..4].copy_from_slice(&i.to_be_bytes());
+            let text: String = f.iter().map(|b| format!("{b:02x}")).collect();
+            json!({"fingerprint": text, "reason_class": "banned", "ended_at": 1})
+        })
+        .collect();
+    replace(
+        &mut s,
+        &mut big,
+        "communities",
+        CoseKind::CommunitiesSnapshot,
+        |p| {
+            p["content"] = json!({"communities": [], "ended": many});
+        },
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let installed = charter.install(&bytes(&big), NOW).unwrap();
+    assert_eq!(installed.ended().len(), cchr::MAX_ENDED);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn passkey_id_at_limit_is_accepted() {
+    // A 1024-byte credential id is the longest accepted; 1025 is refused.
+    let mut s = signer();
+    let mut v = feed(&mut s, 10, 1);
+    replace(
+        &mut s,
+        &mut v,
+        "revocations",
+        CoseKind::RevocationListSnapshot,
+        |p| {
+            p["content"]["passkeys"] = json!([vec![9u8; 1024]]);
+        },
+    );
+    let mut charter = new_charter(ORIGIN, "alpha").unwrap();
+    let current = charter.install(&bytes(&v), NOW).unwrap();
+    assert_eq!(current.revocations().passkey_revoked(&[9; 1024]), Ok(true));
+}
+
+fn history_with_versions(s: &mut Signer, count: usize) -> Value {
+    let mut value = feed(s, 10, 1);
+    let schemas: Vec<Value> = (1..=count)
+        .map(|n| json!({"community":"alpha","version":n,"public":[],"private":[]}))
+        .collect();
+    let versions: Vec<Value> = schemas
+        .iter()
+        .enumerate()
+        .map(|(i, schema)| {
+            let changes = if i == 0 {
+                Value::Null
+            } else {
+                serde_json::to_value(
+                    cshm::classify_changes(
+                        &serde_json::from_value(schemas[i - 1].clone()).unwrap(),
+                        &serde_json::from_value(schema.clone()).unwrap(),
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+            };
+            json!({"schema": schema, "changes": changes})
+        })
+        .collect();
+    replace(s, &mut value, "manifest", CoseKind::SettingsSnapshot, |p| {
+        p["schema_version"] = json!(count);
+    });
+    replace(s, &mut value, "schema", CoseKind::SchemaSnapshot, |p| {
+        p["content"] = schemas.last().unwrap().clone();
+    });
+    replace(
+        s,
+        &mut value,
+        "schema_versions",
+        CoseKind::SchemaSnapshot,
+        |p| {
+            p["content"] =
+                json!({"purpose":"cplc.schema-versions.v1","current":count,"versions":versions});
+        },
+    );
+    value
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn history_length_bounds_are_exact() {
+    // Exactly 256 versions install; the 257th is incoherent.
+    let mut s = signer();
+    let full = history_with_versions(&mut s, 256);
+    new_charter(ORIGIN, "alpha")
+        .unwrap()
+        .install(&bytes(&full), NOW)
+        .unwrap();
+    let mut s = signer();
+    let over = history_with_versions(&mut s, 257);
+    assert_eq!(
+        new_charter(ORIGIN, "alpha")
+            .unwrap()
+            .install(&bytes(&over), NOW)
+            .unwrap_err(),
+        Error::Incoherent
     );
 }
