@@ -1,7 +1,7 @@
 //! Revision evidence of a pairing (lineage revision above 1).
 use crate::VerifiedCharter;
 use crate::genesis_stamp::{GenesisError, StampTrust, lineage_stamp_scope};
-use ckmg::{Change, Lineage, PairingApproval, PublicKey, Receipt};
+use ckmg::{Change, DelegateChange, Lineage, PairingApproval, PublicKey, Receipt};
 use cpsd::{ActionKind, PayloadDigest, StampAction, StampPresentation, StampSalt, VerifiedStamp};
 
 /// Stamp action kind of the ONE pairing slot per community.
@@ -10,7 +10,8 @@ pub const PAIR_ACTION: &str = "device_pair";
 /// Fixed revision evidence refusal, with no supplied identities or presentation bytes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RevisionError {
-    /// Not an attested `DeviceAuthorized` receipt of a revision above 1.
+    /// Not an attested `DeviceAuthorized` receipt of a revision above 1, nor a
+    /// `DeviceDelegated` one changing exactly one delegate over the current lineage.
     Receipt,
     /// Community or member differs from the receipt's binding or the stamp's pseudonym.
     Scope,
@@ -29,6 +30,7 @@ pub struct VerifiedRevision<'a> {
     lineage: &'a Lineage,
     host: PublicKey,
     new_key: PublicKey,
+    delegate: Option<DelegateChange>,
     stamp: VerifiedStamp,
 }
 impl<'a> VerifiedRevision<'a> {
@@ -43,6 +45,11 @@ impl<'a> VerifiedRevision<'a> {
     /// The key the revision adds.
     pub fn new_key(&self) -> &PublicKey {
         &self.new_key
+    }
+    /// For a delegation revision (`DeviceDelegated`), the one delegate it changes; `None` for
+    /// a device pairing.
+    pub fn delegate_change(&self) -> Option<DelegateChange> {
+        self.delegate
     }
     /// The verified stamp, to record it one-use.
     pub fn into_stamp(self) -> VerifiedStamp {
@@ -87,7 +94,9 @@ pub fn pair_payload(
 }
 
 /// Verify the evidence of a pairing revision: the lineage of a `DeviceAuthorized` receipt above
-/// revision 1 counts when BOTH (1) the host device key, the receipt's author, signed the
+/// revision 1, or of a `DeviceDelegated` receipt that changes exactly one delegate over
+/// `devices` ([`ckmg::Lineage::delegate_change`]: an added delegate, a re-delegation or a pure
+/// removal; the digest then binds the changed key), counts when BOTH (1) the host device key, the receipt's author, signed the
 /// pairing digest ([`ckmg::PairingApproval`]) and is in the CURRENT lineage's `devices`
 /// (`devices`, the verifier's latest lineage of the member; a removed host, or a key that is no
 /// device such as a delegate, is refused), and (2) one wallet stamp covers the same digest under
@@ -111,13 +120,31 @@ pub fn verify_revision<'a>(
     let (lineage, host) = receipt
         .attested_lineage()
         .map_err(|_| RevisionError::Receipt)?;
-    let Change::DeviceAuthorized(grant) = &receipt.change else {
-        return Err(RevisionError::Receipt);
+    let (new_key, delegate) = match &receipt.change {
+        Change::DeviceAuthorized(grant) => {
+            let new_key = grant.request.device;
+            if lineage.revision < 2 || !lineage.devices.contains(&new_key) || new_key == host {
+                return Err(RevisionError::Receipt);
+            }
+            (new_key, None)
+        }
+        // A delegation revision (A11 Q2, 2026-11-05): exactly one delegate changes over the
+        // verifier's CURRENT lineage, never a device, the root, the epoch or the identity; the
+        // pairing digest binds the changed key (the added one, or the removed one).
+        Change::DeviceDelegated(_) => {
+            let change = lineage
+                .delegate_change(devices)
+                .map_err(|_| RevisionError::Receipt)?;
+            let key = match change {
+                DelegateChange::Added { key, .. } | DelegateChange::Removed { key } => key,
+            };
+            if lineage.revision < 2 || key == host {
+                return Err(RevisionError::Receipt);
+            }
+            (key, Some(change))
+        }
+        _ => return Err(RevisionError::Receipt),
     };
-    let new_key = grant.request.device;
-    if lineage.revision < 2 || !lineage.devices.contains(&new_key) || new_key == host {
-        return Err(RevisionError::Receipt);
-    }
     let community = current.community();
     if lineage.binding.community() != community || lineage.binding.member() != expected_member {
         return Err(RevisionError::Scope);
@@ -167,6 +194,7 @@ pub fn verify_revision<'a>(
         lineage,
         host,
         new_key,
+        delegate,
         stamp,
     })
 }

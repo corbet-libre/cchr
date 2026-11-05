@@ -459,3 +459,159 @@ fn revision_evidence_needs_the_stamp_and_the_hosts_signature_from_the_current_de
         ));
     });
 }
+
+/// The member's host device alone: its machine, its created lineage and its device key.
+async fn host_only(member: &str, seed: u8) -> (Machine, Lineage, ckmg::PublicKey) {
+    let prf = ckmg::passkey::PrfOutput::from_bytes(&[seed; 32]).unwrap();
+    let mut host = machine();
+    let created = host
+        .create_scope(
+            &prf,
+            Binding::new("alpha", member).unwrap(),
+            DeviceInfo::new("host", &[seed; 16]).unwrap(),
+            b"fixture",
+        )
+        .await
+        .unwrap();
+    host.acknowledge(created.operation).await.unwrap();
+    let (lineage, author) = created.attested_lineage().unwrap();
+    (host, lineage.clone(), author)
+}
+
+/// The host device key's PairingApproval signature over `digest`.
+async fn approve(host: &mut Machine, digest: [u8; 32]) -> [u8; 64] {
+    let approval = PairingApproval::new("alpha", &digest).unwrap();
+    host.sign_device_ed25519_current(
+        ckmg::DeviceFormat::PairingApproval,
+        &approval.message(),
+        NOW + 60,
+    )
+    .await
+    .unwrap()
+}
+
+fn delegated_lineage(receipt: &Receipt) -> Lineage {
+    let Change::DeviceDelegated(lineage) = &receipt.change else {
+        panic!("a delegation revision")
+    };
+    lineage.clone()
+}
+
+/// A11 Q2 (decided 2026-11-05): a `DeviceDelegated` revision counts with the SAME evidence as
+/// a pairing (the device_pair stamp slot over the key it changes plus the PairingApproval of
+/// a current device), and only when it changes exactly one delegate over exactly the
+/// verifier's current lineage: an added delegate, a re-delegation that drops the replaced
+/// one, or a pure removal. A stale base is refused.
+#[test]
+fn a_delegation_revision_counts_with_the_pairing_evidence_and_changes_only_delegates() {
+    let mut f = fixture();
+    let member = f.member.clone();
+    futures_executor::block_on(async {
+        let mut owner = charter("alpha", NOW, &[]);
+        let current = owner.current(NOW).unwrap();
+        let stamps = trust(&[(&f.key, NOW - DAY, None)]);
+        let (mut host, anchor, host_key) = host_only(&member, 21).await;
+        let purposes = [ckmg::Purpose::new(ckmg::Scope::Member, "board", 1).unwrap()];
+        // 1. Add K1.
+        let k1 = ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, None).unwrap();
+        let (added, _) = host
+            .delegate_remote_device(&k1.offer(), &purposes, &[])
+            .await
+            .unwrap();
+        host.acknowledge(added.operation).await.unwrap();
+        let key1 = k1.offer().device;
+        let d = digest(&added, &member, key1.value(), &SESSION);
+        let presentation = stamp_over(&mut f, current, d);
+        let signature = approve(&mut host, d).await;
+        let c = Ctx {
+            current,
+            stamps: &stamps,
+            lineage: &anchor,
+        };
+        let ok = verify(&c, &added, &presentation, &signature, &SESSION, &member).unwrap();
+        assert_eq!(ok.host(), &host_key);
+        assert_eq!(ok.new_key(), &key1);
+        assert_eq!(
+            ok.delegate_change(),
+            Some(ckmg::DelegateChange::Added {
+                key: key1,
+                replaced: None
+            })
+        );
+        // The same evidence over the wrong key or without the host signature is refused.
+        let wrong = stamp_over(&mut f, current, digest(&added, &member, &[1; 32], &SESSION));
+        assert_eq!(
+            verify(&c, &added, &wrong, &signature, &SESSION, &member).unwrap_err(),
+            RevisionError::Stamp
+        );
+        assert_eq!(
+            verify(&c, &added, &presentation, &[0; 64], &SESSION, &member).unwrap_err(),
+            RevisionError::Host
+        );
+        let after_add = delegated_lineage(&added);
+
+        // 2. Re-delegation: K2 replaces K1 in the same revision.
+        let k2 = ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, Some(key1)).unwrap();
+        let (replaced, _) = host
+            .delegate_remote_device(&k2.offer(), &purposes, &[])
+            .await
+            .unwrap();
+        host.acknowledge(replaced.operation).await.unwrap();
+        let key2 = k2.offer().device;
+        let d = digest(&replaced, &member, key2.value(), &SESSION);
+        let presentation = stamp_over(&mut f, current, d);
+        let signature = approve(&mut host, d).await;
+        let c = Ctx {
+            current,
+            stamps: &stamps,
+            lineage: &after_add,
+        };
+        let ok = verify(&c, &replaced, &presentation, &signature, &SESSION, &member).unwrap();
+        assert_eq!(
+            ok.delegate_change(),
+            Some(ckmg::DelegateChange::Added {
+                key: key2,
+                replaced: Some(key1)
+            })
+        );
+        // Over a stale base (the anchor, two revisions back) the same evidence is refused.
+        let stale = Ctx {
+            current,
+            stamps: &stamps,
+            lineage: &anchor,
+        };
+        assert_eq!(
+            verify(
+                &stale,
+                &replaced,
+                &presentation,
+                &signature,
+                &SESSION,
+                &member
+            )
+            .unwrap_err(),
+            RevisionError::Receipt
+        );
+        let after_replace = delegated_lineage(&replaced);
+
+        // 3. A pure removal of K2 counts with the evidence over the removed key.
+        let removed = host.remove_delegate(key2, &[]).await.unwrap();
+        host.acknowledge(removed.operation).await.unwrap();
+        let d = digest(&removed, &member, key2.value(), &SESSION);
+        let presentation = stamp_over(&mut f, current, d);
+        let signature = approve(&mut host, d).await;
+        let c = Ctx {
+            current,
+            stamps: &stamps,
+            lineage: &after_replace,
+        };
+        let ok = verify(&c, &removed, &presentation, &signature, &SESSION, &member).unwrap();
+        assert_eq!(
+            ok.delegate_change(),
+            Some(ckmg::DelegateChange::Removed { key: key2 })
+        );
+        assert_eq!(ok.new_key(), &key2);
+        assert!(ok.lineage().delegates.is_empty());
+        assert!(ok.lineage().devices == anchor.devices);
+    });
+}
