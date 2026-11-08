@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.88"
 description = "Charter: verified community trust material and monotonic revisions"
 license = "LGPL-3.0-only WITH LGPL-3.0-linking-exception"
-repository = "https://git.corbet.ch/corbet-foss/cchr.git"
+repository = "https://git.corbet.ch/corbet-libre/cchr.git"
 publish = false
 
 [features]
@@ -13,16 +13,16 @@ door-vectors = []
 
 [dependencies]
 webauthn-rs-proto = "0.5.5"
-ckyh = { git = "https://git.corbet.ch/corbet-foss/ckyh", branch = "main", default-features = false }
-crbk = { git = "https://git.corbet.ch/corbet-foss/crbk", branch = "main", default-features = false }
-cblv = { git = "https://git.corbet.ch/corbet-foss/cblv.git", branch = "main", default-features = false }
-cbcn = { git = "https://git.corbet.ch/corbet-foss/cbcn", branch = "main" }
-cgrd = { git = "https://git.corbet.ch/corbet-foss/cgrd", branch = "main", default-features = false }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false }
-cshm = { git = "https://git.corbet.ch/corbet-foss/cshm", branch = "main" }
+ckyh = { git = "https://git.corbet.ch/corbet-libre/ckyh.git", branch = "main", default-features = false }
+crbk = { git = "https://git.corbet.ch/corbet-libre/crbk.git", branch = "main", default-features = false }
+cblv = { git = "https://git.corbet.ch/corbet-libre/cblv.git", branch = "main", default-features = false }
+cbcn = { git = "https://git.corbet.ch/corbet-libre/cbcn.git", branch = "main" }
+cgrd = { git = "https://git.corbet.ch/corbet-libre/cgrd.git", branch = "main", default-features = false }
+csgn = { git = "https://git.corbet.ch/corbet-libre/csgn.git", branch = "main", default-features = false }
+cshm = { git = "https://git.corbet.ch/corbet-libre/cshm.git", branch = "main" }
 # Genesis lineage evidence by stamp: the Keys receipt and the wallet stamp presentation.
-ckmg = { git = "https://git.corbet.ch/corbet-foss/ckmg.git", branch = "main" }
-cpsd = { git = "https://git.corbet.ch/corbet-foss/cpsd", branch = "main", default-features = false }
+ckmg = { git = "https://git.corbet.ch/corbet-libre/ckmg.git", branch = "main" }
+cpsd = { git = "https://git.corbet.ch/corbet-libre/cpsd.git", branch = "main", default-features = false }
 blake3 = "1"
 sha2 = { version = "0.11", default-features = false }
 serde = { version = "1", features = ["derive"] }
@@ -35,12 +35,12 @@ futures-executor = "0.3"
 ohttp = { version = "0.8", default-features = false, features = ["rust-hpke"] }
 coset = "0.4"
 ed25519-dalek = { version = "3", default-features = false, features = ["fast"] }
-csgn = { git = "https://git.corbet.ch/corbet-foss/csgn", branch = "main", default-features = false, features = ["volatile-signer"] }
+csgn = { git = "https://git.corbet.ch/corbet-libre/csgn.git", branch = "main", default-features = false, features = ["volatile-signer"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 # Native integration tests invoke the original producer; the shipped Charter
 # library and browser graph do not depend on its service or storage implementation.
-cplc = { git = "https://git.corbet.ch/corbet-libs/cplc", branch = "main" }
+cplc = { git = "https://git.corbet.ch/corbet-fsl/cplc.git", branch = "main" }
 libsql = { version = "0.9", default-features = false, features = ["core"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
