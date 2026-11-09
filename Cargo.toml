@@ -50,3 +50,7 @@ wasm-bindgen-test = "0.3"
 
 [lints.rust]
 unsafe_code = "forbid"
+
+# Rule 1 exception (a test tier that must run alone): `door` includes the `.build/fixtures` the
+# door-fixtures CI gate generates and runs as its own leg; every other integration test is a module of
+# `tests/it/main.rs` (the `it` target, including the former `vectors` target).

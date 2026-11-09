@@ -36,7 +36,7 @@ bash scripts/wasm-runner.sh
 export PATH="$(tail -n 1 "$GITHUB_PATH"):$PATH"
 export CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER=wasm-bindgen-test-runner
 CCHR_LAST_GATE="wasm-vectors"
-cargo test --locked --target wasm32-unknown-unknown --lib --test vectors
+cargo test --locked --target wasm32-unknown-unknown --lib --test it
 
 CCHR_LAST_GATE="door-fixtures"
 bash scripts/door-fixtures.sh

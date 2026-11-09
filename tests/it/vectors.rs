@@ -121,7 +121,7 @@ fn balance_is_atomic_signed_routing_with_independent_floors() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn current_owner_capture_keeps_original_signature_and_legacy_capture_refuses() {
     let current: Value =
-        serde_json::from_slice(include_bytes!("fixtures/balance-publication-v2.json")).unwrap();
+        serde_json::from_slice(include_bytes!("../fixtures/balance-publication-v2.json")).unwrap();
     let ring = csgn::KeyRing::from_cbor(
         &serde_json::from_value::<Vec<u8>>(current["configuredFixtureRing"].clone()).unwrap(),
     )
@@ -141,7 +141,7 @@ fn current_owner_capture_keeps_original_signature_and_legacy_capture_refuses() {
         Err(cbcn::Error::Signature)
     ));
     let legacy: Value =
-        serde_json::from_slice(include_bytes!("fixtures/balance-material.json")).unwrap();
+        serde_json::from_slice(include_bytes!("../fixtures/balance-material.json")).unwrap();
     let ring = csgn::KeyRing::from_cbor(
         &serde_json::from_value::<Vec<u8>>(legacy["configuredFixtureRing"].clone()).unwrap(),
     )
@@ -1492,7 +1492,7 @@ fn original_passkey_revocations_are_explicit_and_bounded() {
 
 fn with_root_board(signer: &mut Signer, revision: u64, board_revision: u64) -> Value {
     let mut value = feed(signer, revision, 1);
-    let descriptor: Vec<u8> = include_bytes!("fixtures/root-board-public.bin").to_vec();
+    let descriptor: Vec<u8> = include_bytes!("../fixtures/root-board-public.bin").to_vec();
     let material = json!({"purpose":"cplc.root-board.v1","community":"alpha","revision":board_revision,"policy_epoch":1,"descriptor":descriptor});
     value["root_board"] = json!(sign(signer, CoseKind::SettingsSnapshot, material));
     replace(

@@ -16,7 +16,7 @@ Build and test (quote the verdict line, never infer from a pipe):
 Land: `cargo fmt` in touched repos, rebase on main (never force-push),
 `cbuild <lane> xtask land --dry`, then `xtask land`.
 
-Invariants (rule -> enforcing test in `tests/vectors.rs` unless noted):
+Invariants (rule -> enforcing test in `tests/it/vectors.rs` unless noted):
 - Verify-only: charter never admits; admission is the Guard's job
   -> `coherent_material_is_immutable_and_expiry_cannot_reverse` (empty `Bundle` not admitted)
 - Atomic commit: failed installs keep the old set
@@ -26,7 +26,7 @@ Invariants (rule -> enforcing test in `tests/vectors.rs` unless noted):
 - Injected clock only moves forward; regression is refused
   -> `coherent_material_is_immutable_and_expiry_cannot_reverse` (`ClockRegression`)
 - `MAXIMUM_SNAPSHOT_AGE` is a code constant: two issuer days
-  -> `tests/snapshot_age.rs::the_product_snapshot_age_limit_is_two_issuer_days`
+  -> `tests/it/snapshot_age.rs::the_product_snapshot_age_limit_is_two_issuer_days`
 - Pure leaf: no storage, network, wall clock or signing keys
   -> `src/lib.rs:2` (`forbid(unsafe_code)`); installs take only `&[u8]` + `now`
 - Duplicate object keys refused at every depth
