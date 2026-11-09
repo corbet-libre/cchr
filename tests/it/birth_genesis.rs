@@ -9,7 +9,7 @@ use cchr::{
 use csgn::KeyRing;
 use serde_json::Value;
 
-const FIXTURE: &str = include_str!("fixtures/birth-genesis-v1.json");
+const FIXTURE: &str = include_str!("../fixtures/birth-genesis-v1.json");
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
