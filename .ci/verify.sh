@@ -10,7 +10,6 @@ export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-never}"
 export CI=true
 
 CCHR_LAST_GATE="metadata"
-bash .ci/update-our-crates.sh
 cargo metadata --locked --format-version 1 > dependency-metadata.json
 CCHR_LAST_GATE="first-party"
 python3 .github/check-first-party.py
