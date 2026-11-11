@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-FIRST_PARTY = re.compile(r"^(?:git\+)?https://(?:github\.com/corbet-(?:foss|libs)|git\.corbet\.ch/(?:corbet-(?:foss|libs|libre|fsl)|cmty(?:meet|mt)))/")
+FIRST_PARTY = re.compile(r"^(?:git\+)?https://(?:github\.com/corbet-(?:libre|fsl)|git\.corbet\.ch/(?:corbet-(?:libre|fsl)|cmty(?:meet|mt)))/")
 SHA = re.compile(r"^[0-9a-f]{40}$")
 
 
@@ -45,10 +45,10 @@ def check_manifest(value):
 
 
 def self_test():
-    source = 'git+https://github.com/corbet-foss/example?branch=main#' + 'a' * 40
+    source = 'git+https://github.com/corbet-libre/example?branch=main#' + 'a' * 40
     package = {'name': 'example', 'source': source}
     check_packages([package])
-    check_manifest({'git': 'https://github.com/corbet-foss/example', 'branch': 'main'})
+    check_manifest({'git': 'https://github.com/corbet-libre/example', 'branch': 'main'})
     for packages in [[package, package], [package, {'name': 'example'}],
                      [{'name': 'example', 'source': source.replace('main', 'next')}],
                      [{'name': 'example', 'source': source.replace('branch=main', 'rev=abc')}],
@@ -59,8 +59,8 @@ def self_test():
         except ValueError:
             continue
         raise AssertionError('Invalid dependency graph accepted')
-    for value in [{'git': 'https://github.com/corbet-foss/example', 'rev': 'a' * 40},
-                  {'git': 'https://github.com/corbet-foss/example', 'branch': 'main', 'tag': 'v1'}]:
+    for value in [{'git': 'https://github.com/corbet-libre/example', 'rev': 'a' * 40},
+                  {'git': 'https://github.com/corbet-libre/example', 'branch': 'main', 'tag': 'v1'}]:
         try:
             check_manifest(value)
         except ValueError:
@@ -70,7 +70,7 @@ def self_test():
 
 def check_first_party_orgs():
     """Every current owner resolves on the canonical forge; github.com keeps its former owners."""
-    for owner in ('corbet-foss', 'corbet-libs', 'corbet-libre', 'corbet-fsl',
+    for owner in ('corbet-libre', 'corbet-fsl',
                   'cmtymeet', 'cmtymt'):
         url = f'https://git.corbet.ch/{owner}/example'
         if not FIRST_PARTY.match(url):
@@ -79,8 +79,6 @@ def check_first_party_orgs():
                 'https://user@git.corbet.ch/corbet-libre/example',
                 'https://git.corbet.ch:443/corbet-libre/example',
                 'https://git.corbet.ch/corbet-libre.evil/example',
-                'https://github.com/corbet-libre/example',
-                'https://github.com/corbet-fsl/example',
                 'https://github.com/cmtymt/example'):
         if FIRST_PARTY.match(url):
             raise AssertionError(f'Invalid first-party owner accepted: {url}')
