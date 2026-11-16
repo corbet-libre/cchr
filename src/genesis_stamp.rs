@@ -430,7 +430,7 @@ fn genesis_stamp(
 /// Issuer of the wallet's signed global status (`cgbl:<scope>`, scope `global`).
 const GLOBAL_STATUS_ISSUER: &str = "cgbl:global";
 
-/// The part of the wallet's signed global status (`cgbl::Status`, version 2) that names its
+/// The part of the wallet's signed global status (`cgbl::Status`, version 3) that names its
 /// stamp keys. Other fields are the wallet's and are ignored here.
 #[derive(serde::Deserialize)]
 struct GlobalStampStatus {
@@ -472,7 +472,7 @@ pub fn global_stamp_trust(
         .map_err(|_| GenesisError::Stamp)?;
     let status: GlobalStampStatus =
         serde_json::from_slice(verified.payload()).map_err(|_| GenesisError::Invalid)?;
-    if status.version != 2 || status.purpose != "global-passport-status" || status.scope != "global"
+    if status.version != 3 || status.purpose != "global-passport-status" || status.scope != "global"
     {
         return Err(GenesisError::Stamp);
     }

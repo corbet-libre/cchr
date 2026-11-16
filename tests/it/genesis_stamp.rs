@@ -469,14 +469,14 @@ fn trust_scope_and_wire_inputs_are_checked() {
     assert!(std::error::Error::source(&error).is_none());
 }
 
-/// A `cgbl::Status` (version 2) of the global scope signed at NOW by the global key ring.
+/// A `cgbl::Status` (version 3) of the global scope signed at NOW by the global key ring.
 fn global_status(
     signer: &mut Signer,
     current: Option<&StampIssuerKey>,
     ring: &[(&StampIssuerKey, u64, Option<u64>)],
     edit: impl FnOnce(&mut Value),
 ) -> Vec<u8> {
-    let mut status = json!({"version":2,"purpose":"global-passport-status","scope":"global",
+    let mut status = json!({"version":3,"purpose":"global-passport-status","scope":"global",
         "epoch":EPOCH,"policy_revision":1,"shared_expiry":NOW / DAY * DAY + 30 * DAY,
         "issuer_public_key":[1,2,3]});
     if let Some(current) = current {
@@ -578,6 +578,7 @@ fn a_device_takes_the_stamp_trust_from_the_signed_global_status() {
     for (field, value) in [
         ("purpose", json!("global-passport-other")),
         ("version", json!(1)),
+        ("version", json!(2)),
         ("scope", json!("alpha")),
     ] {
         let status = global_status(&mut global, Some(&new), &rotated, |status| {
