@@ -513,7 +513,7 @@ fn a_delegation_revision_counts_with_the_pairing_evidence_and_changes_only_deleg
         let (mut host, anchor, host_key) = host_only(&member, 21).await;
         let purposes = [ckmg::Purpose::new(ckmg::Scope::Member, "board", 1).unwrap()];
         // 1. Add K1.
-        let k1 = ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, None).unwrap();
+        let k1 = ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, "alpha", None).unwrap();
         let (added, _) = host
             .delegate_remote_device(&k1.offer(), &purposes, &[])
             .await
@@ -551,7 +551,8 @@ fn a_delegation_revision_counts_with_the_pairing_evidence_and_changes_only_deleg
         let after_add = delegated_lineage(&added);
 
         // 2. Re-delegation: K2 replaces K1 in the same revision.
-        let k2 = ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, Some(key1)).unwrap();
+        let k2 =
+            ckmg::DelegationRequest::new(&mut ckmg::SystemEntropy, "alpha", Some(key1)).unwrap();
         let (replaced, _) = host
             .delegate_remote_device(&k2.offer(), &purposes, &[])
             .await
